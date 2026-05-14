@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>White Orbit</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+    }
+
+    body:active {
+      cursor: grabbing;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const state = {
+      dots: 3500,
+      pattern: "fibonacci",
+      rotation: { x: 0.45, y: 0.2 },
+      zoom: 8,
+      speed: 0.03,
+      dotSize: 8,
+      pointer: { down: false, lastX: 0, lastY: 0 },
+      audioController: null,
+      audioStarted: false,
+    };
+
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function makeSpherePoints(count) {
+      const points = [];
+      const golden = Math.PI * (3 - Math.sqrt(5));
+
+      for (let i = 0; i < count; i++) {
+        const y = 1 - (i / Math.max(1, count - 1)) * 2;
+        const radius = Math.sqrt(Math.max(0, 1 - y * y));
+        const theta = golden * i;
+
+        points.push({
+          x: Math.cos(theta) * radius,
+          y,
+          z: Math.sin(theta) * radius,
+        });
+      }
+
+      return points;
+    }
+
+    const points = makeSpherePoints(state.dots);
+    const start = performance.now();
+
+    function project(p, t, w, h) {
+      const rx = state.rotation.x + t * 0.7 * state.speed;
+      const ry = state.rotation.y;
+
+      let x = p.x;
+      let y = p.y;
+      let z = p.z;
+
+      const cosX = Math.cos(rx);
+      const sinX = Math.sin(rx);
+      const y1 = y * cosX - z * sinX;
+      const z1 = y * sinX + z * cosX;
+      y = y1;
+      z = z1;
+
+      const cosY = Math.cos(ry);
+      const sinY = Math.sin(ry);
+      const x2 = x * cosY + z * sinY;
+      const z2 = -x * sinY + z * cosY;
+      x = x2;
+      z = z2;
+
+      const camera = 3.2 / state.zoom;
+      const perspective = camera / (camera - z);
+      const scale = Math.min(w, h) * 0.32 * state.zoom;
+
+      return {
+        x: w / 2 + x * scale * perspective,
+        y: h / 2 + y * scale * perspective,
+        z,
+      };
+    }
+
+    function draw(now) {
+      const t = (now - start) / 1000;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, w, h);
+
+      const projected = points
+        .map((p) => project(p, t, w, h))
+        .sort((a, b) => a.z - b.z);
+
+      for (const p of projected) {
+        const depth = (p.z + 1) / 2;
+        const depthScale = 0.45 + depth * 1.25;
+        const size = state.dotSize * depthScale;
+
+        ctx.fillStyle = "rgba(255,255,255,1)";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    async function startSound() {
+      if (state.audioStarted || state.audioController) return;
+
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+
+      const audio = new AudioContextClass();
+      await audio.resume();
+
+      const master = audio.createGain();
+      master.gain.value = 0.12;
+      master.connect(audio.destination);
+
+      const filter = audio.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = 520;
+      filter.Q.value = 8;
+      filter.connect(master);
+
+      const delay = audio.createDelay();
+      delay.delayTime.value = 0.38;
+
+      const feedback = audio.createGain();
+      feedback.gain.value = 0.42;
+
+      delay.connect(feedback);
+      feedback.connect(delay);
+      delay.connect(master);
+
+      function makeOsc(freq, gainValue, type = "sine") {
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        gain.gain.value = gainValue;
+        osc.connect(gain);
+        gain.connect(filter);
+        gain.connect(delay);
+        osc.start();
+        return { osc, gain };
+      }
+
+      const voices = [
+        makeOsc(55, 0.55, "sine"),
+        makeOsc(82.41, 0.22, "triangle"),
+        makeOsc(110, 0.13, "sine"),
+        makeOsc(220, 0.045, "triangle"),
+      ];
+
+      const lfo = audio.createOscillator();
+      const lfoGain = audio.createGain();
+      lfo.frequency.value = 0.07;
+      lfoGain.gain.value = 260;
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+      lfo.start();
+
+      let step = 0;
+      const notes = [55, 65.41, 73.42, 82.41, 98, 110, 130.81, 146.83];
+      const timer = window.setInterval(() => {
+        const base = notes[step % notes.length];
+        voices[1].osc.frequency.setTargetAtTime(base * 1.5, audio.currentTime, 0.08);
+        voices[2].osc.frequency.setTargetAtTime(base * 2, audio.currentTime, 0.08);
+        voices[3].osc.frequency.setTargetAtTime(base * 4, audio.currentTime, 0.08);
+        step += 1;
+      }, 520);
+
+      state.audioController = {
+        stop() {
+          window.clearInterval(timer);
+          voices.forEach(({ osc }) => osc.stop());
+          lfo.stop();
+          audio.close();
+        }
+      };
+
+      state.audioStarted = true;
+    }
+
+    function pointerDown(e) {
+      state.pointer.down = true;
+      state.pointer.lastX = e.clientX;
+      state.pointer.lastY = e.clientY;
+      startSound().catch(() => {});
+    }
+
+    function pointerMove(e) {
+      if (!state.pointer.down) return;
+      const dx = e.clientX - state.pointer.lastX;
+      const dy = e.clientY - state.pointer.lastY;
+      state.rotation.y += dx * 0.006;
+      state.rotation.x += dy * 0.006;
+      state.pointer.lastX = e.clientX;
+      state.pointer.lastY = e.clientY;
+    }
+
+    function pointerUp() {
+      state.pointer.down = false;
+    }
+
+    window.addEventListener("resize", resize);
+    canvas.addEventListener("pointerdown", pointerDown);
+    canvas.addEventListener("pointermove", pointerMove);
+    canvas.addEventListener("pointerup", pointerUp);
+    canvas.addEventListener("pointerleave", pointerUp);
+
+    resize();
+    requestAnimationFrame(draw);
+
+    // ブラウザの自動再生制限により、音は最初のクリック/タップ後に鳴る場合があります。
+    startSound().catch(() => {});
+  </script>
+</body>
+</html>
