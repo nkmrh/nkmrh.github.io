@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Signal Bloom</title>
+  <style>
+    html, body {
+      margin: 0; width: 100%; height: 100%; overflow: hidden;
+      background: #000; user-select: none; touch-action: none; cursor: pointer;
+    }
+    canvas { display: block; width: 100vw; height: 100vh; background: #000; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const state = {
+      pointsPerLayer: 28,
+      layerCount: 8,
+      count: 28 * 8,
+      speed: 0.00225,
+      depth: 1400,
+      focalLength: 520,
+      pointer: { down: false, lastX: 0, lastY: 0, offsetX: 0, offsetY: 0 },
+      audioStarted: false,
+      audioController: null,
+    };
+
+    let stars = [];
+    let connectionStrengths = new Map();
+    let nextStarUid = 1;
+
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      createStars();
+    }
+
+    function createStar(index = 0, resetNear = false) {
+      const pointIndex = index % state.pointsPerLayer;
+      const layerIndex = Math.floor(index / state.pointsPerLayer) % state.layerCount;
+      const normalizedLayer = layerIndex / Math.max(1, state.layerCount - 1);
+      const theta = (pointIndex / state.pointsPerLayer) * Math.PI * 2;
+      const layerRotation = layerIndex * 0.11;
+
+      return {
+        uid: nextStarUid++,
+        index,
+        pointIndex,
+        layerIndex,
+        normalizedLayer,
+        baseTheta: theta,
+        layerRotation,
+        x: 0,
+        y: 0,
+        z: resetNear ? state.depth : 160 + normalizedLayer * state.depth,
+        hue: Math.random() * 360,
+        saturation: 65 + Math.random() * 35,
+        lightness: 55 + Math.random() * 25,
+        opacity: resetNear ? 0 : 1,
+        dying: false,
+      };
+    }
+
+    function createStars() {
+      stars = Array.from({ length: state.count }, (_, index) => createStar(index, false));
+      connectionStrengths.clear();
+    }
+
+    function project(star, w, h) {
+      const perspective = state.focalLength / star.z;
+      return {
+        x: w / 2 + state.pointer.offsetX + star.x * perspective,
+        y: h / 2 + state.pointer.offsetY + star.y * perspective,
+      };
+    }
+
+    function draw(now = 0) {
+      const time = now * 0.001;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const visibleDots = [];
+
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, w, h);
+
+      for (let i = 0; i < stars.length; i++) {
+        const star = stars[i];
+
+        const roseK = 5;
+        const rotation = time * 0.00012;
+        const tunnelBreathing = 0.92 + Math.sin(time * 0.00035 + star.layerIndex * 0.4) * 0.08;
+        const theta = star.baseTheta + star.layerRotation + rotation;
+        const rose = Math.cos(roseK * star.baseTheta);
+        const spread = Math.min(w, h) * 0.46;
+        const radius = Math.abs(rose) * spread * tunnelBreathing;
+        star.x = Math.cos(theta) * radius;
+        star.y = Math.sin(theta) * radius;
+
+        if (star.dying) {
+          star.z -= state.depth * state.speed;
+          star.opacity -= 0.012;
+          if (star.opacity <= 0) {
+            stars[i] = createStar(i, true);
+            continue;
+          }
+        } else {
+          star.opacity = Math.min(1, star.opacity + 0.006);
+          star.z -= state.depth * state.speed;
+        }
+
+        const p = project(star, w, h);
+
+        if (star.z <= 24) {
+          stars[i] = createStar(i, true);
+          continue;
+        }
+
+        if (p.x < -180 || p.x > w + 180 || p.y < -180 || p.y > h + 180) {
+          star.dying = true;
+        }
+
+        const depth = 1 - star.z / state.depth;
+        const frontFade = Math.max(0, Math.min(1, (star.z - 120) / 420));
+        const alpha = star.opacity * frontFade;
+
+        visibleDots.push({
+          index: star.index,
+          uid: star.uid,
+          x: p.x,
+          y: p.y,
+          depth,
+          alpha,
+          hue: star.hue,
+          saturation: star.saturation,
+          lightness: star.lightness,
+        });
+      }
+
+      const activeConnectionKeys = new Set();
+      const connectionOffsets = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+
+      ctx.lineWidth = 0.8;
+
+      for (let i = 0; i < visibleDots.length; i++) {
+        const a = visibleDots[i];
+        if (a.alpha <= 0) continue;
+
+        for (const offset of connectionOffsets) {
+          const b = visibleDots[(i + offset) % visibleDots.length];
+          if (!b || b.alpha <= 0) continue;
+
+          const key = a.uid < b.uid ? `${a.uid}-${b.uid}` : `${b.uid}-${a.uid}`;
+          activeConnectionKeys.add(key);
+
+          const strength = Math.min(a.depth, b.depth) * Math.min(a.alpha, b.alpha);
+          const targetAlpha = Math.min(0.32, strength * 0.30);
+          const previous = connectionStrengths.get(key) || { alpha: 0 };
+          const nextAlpha = previous.alpha + (targetAlpha - previous.alpha) * 0.045;
+          const hue = (a.hue + b.hue) / 2;
+          const saturation = (a.saturation + b.saturation) / 2;
+          const lightness = (a.lightness + b.lightness) / 2;
+
+          connectionStrengths.set(key, { alpha: nextAlpha, hue, saturation, lightness });
+
+          ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${nextAlpha})`;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+      }
+
+      for (const [key, connection] of connectionStrengths) {
+        if (activeConnectionKeys.has(key)) continue;
+
+        const nextAlpha = connection.alpha * 0.92;
+        if (nextAlpha < 0.004) {
+          connectionStrengths.delete(key);
+        } else {
+          connection.alpha = nextAlpha;
+          connectionStrengths.set(key, connection);
+        }
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    async function startSound() {
+      if (state.audioStarted || state.audioController) return;
+
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+
+      const audio = new AudioContextClass();
+      await audio.resume();
+
+      const master = audio.createGain();
+      master.gain.value = 0.12;
+      master.connect(audio.destination);
+
+      const drone = audio.createOscillator();
+      const droneGain = audio.createGain();
+      drone.type = "sine";
+      drone.frequency.value = 36.7;
+      droneGain.gain.value = 0.18;
+      drone.connect(droneGain);
+      droneGain.connect(master);
+      drone.start();
+
+      const noiseBuffer = audio.createBuffer(1, audio.sampleRate * 2, audio.sampleRate);
+      const noiseData = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < noiseData.length; i++) {
+        noiseData[i] = Math.random() * 2 - 1;
+      }
+
+      const noise = audio.createBufferSource();
+      noise.buffer = noiseBuffer;
+      noise.loop = true;
+
+      const noiseFilter = audio.createBiquadFilter();
+      noiseFilter.type = "bandpass";
+      noiseFilter.frequency.value = 1400;
+      noiseFilter.Q.value = 5.5;
+
+      const noiseGain = audio.createGain();
+      noiseGain.gain.value = 0.045;
+
+      noise.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(master);
+      noise.start();
+
+      const pulseGain = audio.createGain();
+      pulseGain.gain.value = 0.07;
+      pulseGain.connect(master);
+
+      const timer = window.setInterval(() => {
+        noiseFilter.frequency.setTargetAtTime(700 + Math.random() * 2600, audio.currentTime, 0.12);
+        noiseGain.gain.setTargetAtTime(0.025 + Math.random() * 0.04, audio.currentTime, 0.08);
+
+        if (Math.random() > 0.58) {
+          const osc = audio.createOscillator();
+          const env = audio.createGain();
+          const pan = audio.createStereoPanner();
+          const freqs = [420, 560, 740, 980, 1320, 1760];
+
+          osc.type = "sine";
+          osc.frequency.value = freqs[Math.floor(Math.random() * freqs.length)];
+          pan.pan.value = Math.random() * 2 - 1;
+
+          const t = audio.currentTime;
+          env.gain.setValueAtTime(0.0001, t);
+          env.gain.linearRampToValueAtTime(0.18, t + 0.006);
+          env.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+
+          osc.connect(env);
+          env.connect(pan);
+          pan.connect(pulseGain);
+
+          osc.start(t);
+          osc.stop(t + 0.22);
+        }
+      }, 420);
+
+      state.audioController = {
+        stop() {
+          window.clearInterval(timer);
+          drone.stop();
+          noise.stop();
+          audio.close();
+        }
+      };
+
+      state.audioStarted = true;
+    }
+
+    function enterFullscreen() {
+      if (document.fullscreenElement) return;
+      const element = document.documentElement;
+      if (element.requestFullscreen) element.requestFullscreen().catch(() => {});
+      else if (element.webkitRequestFullscreen) element.webkitRequestFullscreen();
+    }
+
+    function activate(e) {
+      enterFullscreen();
+      startSound().catch(() => {});
+      state.pointer.down = true;
+      state.pointer.lastX = e.clientX;
+      state.pointer.lastY = e.clientY;
+    }
+
+    function drag(e) {
+      if (!state.pointer.down) return;
+      const dx = e.clientX - state.pointer.lastX;
+      const dy = e.clientY - state.pointer.lastY;
+      state.pointer.offsetX += dx * 0.9;
+      state.pointer.offsetY += dy * 0.9;
+      state.pointer.lastX = e.clientX;
+      state.pointer.lastY = e.clientY;
+    }
+
+    function release() {
+      state.pointer.down = false;
+    }
+
+    window.addEventListener("resize", resize);
+    document.addEventListener("fullscreenchange", resize);
+    canvas.addEventListener("pointerdown", activate);
+    canvas.addEventListener("pointermove", drag);
+    canvas.addEventListener("pointerup", release);
+    canvas.addEventListener("pointerleave", release);
+
+    resize();
+    requestAnimationFrame(draw);
+    startSound().catch(() => {});
+  </script>
+</body>
+</html>
