@@ -114,7 +114,9 @@
 
       const camera = 3.2 / state.zoom;
       const perspective = camera / (camera - z);
-      const scale = Math.min(w, h) * 0.32 * state.zoom;
+      const isMobileLike = Math.min(w, h) < 700;
+      const baseSize = isMobileLike ? 900 : Math.min(w, h);
+      const scale = baseSize * 0.32 * state.zoom;
 
       return {
         x: w / 2 + x * scale * perspective,
