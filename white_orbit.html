@@ -56,6 +56,18 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
+    function enterFullscreen() {
+      if (document.fullscreenElement) return;
+
+      const element = document.documentElement;
+
+      if (element.requestFullscreen) {
+        element.requestFullscreen().catch(() => {});
+      } else if (element.webkitRequestFullscreen) {
+        element.webkitRequestFullscreen();
+      }
+    }
+
     function makeSpherePoints(count) {
       const points = [];
       const golden = Math.PI * (3 - Math.sqrt(5));
@@ -218,10 +230,12 @@
     }
 
     function pointerDown(e) {
+      enterFullscreen();
+      startSound().catch(() => {});
+
       state.pointer.down = true;
       state.pointer.lastX = e.clientX;
       state.pointer.lastY = e.clientY;
-      startSound().catch(() => {});
     }
 
     function pointerMove(e) {
@@ -239,6 +253,7 @@
     }
 
     window.addEventListener("resize", resize);
+    document.addEventListener("fullscreenchange", resize);
     canvas.addEventListener("pointerdown", pointerDown);
     canvas.addEventListener("pointermove", pointerMove);
     canvas.addEventListener("pointerup", pointerUp);
