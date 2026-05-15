@@ -36,17 +36,15 @@
 
     const state = {
       count: 28,
-      speed: 0.0025,
+      speed: 0.0030,
       depth: 1200,
       focalLength: 520,
       dotSize: 31.5,
       kaleidoAngle: 0,
       blendMode: "screen",
-      blendStrength: 0.5,
-      centerX: 0,
-      centerY: 0,
-      offsetSeedX: Math.random() * 1000,
-      offsetSeedY: Math.random() * 1000,
+      blendStrength: 0.2,
+      sourceOffsetX: 0,
+      sourceOffsetY: 0,
       pointer: { down: false, lastX: 0, lastY: 0, offsetX: 0, offsetY: 0 },
       audioStarted: false,
       audioController: null,
@@ -100,14 +98,10 @@
       };
     }
 
-    function drawKaleidoDot(x, y, size, alpha, now = 0) {
+    function drawKaleidoDot(x, y, size) {
       const segments = 8;
-      const t = now * 0.000055;
-      const randomOffsetX = Math.sin(t + state.offsetSeedX) * 180 + Math.sin(t * 0.37 + state.offsetSeedY) * 90;
-      const randomOffsetY = Math.cos(t * 0.81 + state.offsetSeedY) * 180 + Math.sin(t * 0.51 + state.offsetSeedX) * 90;
-
-      x += randomOffsetX;
-      y += randomOffsetY;
+      x += state.sourceOffsetX;
+      y += state.sourceOffsetY;
 
       const angleStep = (Math.PI * 2) / segments;
 
@@ -130,20 +124,6 @@
         ctx.arc(mx, my, size, 0, Math.PI * 2);
         ctx.fill();
       }
-    }
-
-    function drawCenterGuard(w, h) {
-      const radius = Math.min(w, h) * 0.22;
-      const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
-      gradient.addColorStop(0, "rgba(0,0,0,0.38)");
-      gradient.addColorStop(0.42, "rgba(0,0,0,0.18)");
-      gradient.addColorStop(1, "rgba(0,0,0,0)");
-
-      ctx.globalCompositeOperation = "source-over";
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(0, 0, radius, 0, Math.PI * 2);
-      ctx.fill();
     }
 
     function draw(now = 0) {
@@ -199,8 +179,8 @@
 
       ctx.save();
       ctx.translate(
-        w / 2 + state.pointer.offsetX + state.centerX,
-        h / 2 + state.pointer.offsetY + state.centerY
+        w / 2 + state.pointer.offsetX,
+        h / 2 + state.pointer.offsetY
       );
       ctx.rotate(now * 0.000025);
 
@@ -208,10 +188,8 @@
 
       for (const dot of projected) {
         ctx.fillStyle = `hsla(${dot.hue}, ${dot.saturation}%, ${dot.lightness}%, ${Math.min(1, dot.alpha * state.blendStrength)})`;
-        drawKaleidoDot(dot.x, dot.y, dot.size, dot.alpha, now);
+        drawKaleidoDot(dot.x, dot.y, dot.size);
       }
-
-      drawCenterGuard(w, h);
 
       ctx.restore();
 
