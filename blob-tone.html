@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Blob Tone</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      user-select: none;
+      touch-action: none;
+      cursor: pointer;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      filter: contrast(18) blur(12px);
+      transform: scale(1.036);
+      transform-origin: center;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const state = {
+      count: 15,
+      baseRadius: 85,
+      speed: 0.35,
+      audioMotionAmount: 0.9,
+      gradientAmount: 0,
+      pointer: {
+        x: 0,
+        y: 0,
+        lastX: 0,
+        lastY: 0,
+        velocityX: 0,
+        velocityY: 0,
+        draggingBall: null,
+        dragOffsetX: 0,
+        dragOffsetY: 0,
+      },
+      audioContext: null,
+    };
+
+    let balls = [];
+    let trails = [];
+    let nextBallId = 1;
+    const contactPairs = new Set();
+
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      createBalls();
+    }
+
+    function randomRange(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function createBall() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const radius = state.baseRadius * randomRange(0.65, 1.55);
+
+      return {
+        id: nextBallId++,
+        x: randomRange(radius, w - radius),
+        y: randomRange(radius, h - radius),
+        vx: randomRange(-1, 1) * state.speed,
+        vy: randomRange(-1, 1) * state.speed,
+        radius,
+        hue: 195,
+        saturation: 100,
+        lightness: 55,
+        phase: randomRange(0, Math.PI * 2),
+        audioPhase: randomRange(0, Math.PI * 2),
+        audioSensitivity: randomRange(0.45, 1.35),
+        wanderPhaseX: randomRange(0, Math.PI * 2),
+        wanderPhaseY: randomRange(0, Math.PI * 2),
+        wanderSpeed: randomRange(0.35, 1.15),
+      };
+    }
+
+    function createBalls() {
+      contactPairs.clear();
+      trails = [];
+      balls = Array.from({ length: state.count }, () => createBall());
+    }
+
+    function draw(now = 0) {
+      const time = now * 0.001;
+      const audioLevel =
+        0.5 +
+        Math.sin(time * 1.25) * 0.28 +
+        Math.sin(time * 2.8 + 1.2) * 0.18 +
+        Math.sin(time * 5.7 + 0.4) * 0.10;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = "screen";
+
+      for (let i = trails.length - 1; i >= 0; i--) {
+        const trail = trails[i];
+        trail.life *= 0.9;
+        trail.radius *= 0.99;
+
+        if (trail.life < 0.025) {
+          trails.splice(i, 1);
+          continue;
+        }
+
+        const gradient = ctx.createRadialGradient(trail.x, trail.y, 0, trail.x, trail.y, trail.radius);
+        const g = state.gradientAmount;
+        gradient.addColorStop(0, `hsla(${195 - 10 * g}, 100%, ${55 + 11 * g}%, ${0.32 * trail.life})`);
+        gradient.addColorStop(0.42, `hsla(${195 + 10 * g}, 100%, ${55 - 1 * g}%, ${0.20 * trail.life})`);
+        gradient.addColorStop(0.78, `hsla(${195 + 45 * g}, 100%, ${55 - 17 * g}%, ${0.10 * trail.life})`);
+        gradient.addColorStop(1, `hsla(${195 + 55 * g}, 100%, ${55 - 33 * g}%, 0)`);
+
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(trail.x, trail.y, trail.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (const ball of balls) {
+        if (state.pointer.draggingBall === ball) {
+          ball.x = state.pointer.x + state.pointer.dragOffsetX;
+          ball.y = state.pointer.y + state.pointer.dragOffsetY;
+
+          trails.push({
+            x: ball.x,
+            y: ball.y,
+            radius: ball.radius * 0.9,
+            hue: ball.hue,
+            saturation: ball.saturation,
+            lightness: ball.lightness,
+            life: 1,
+          });
+
+          if (trails.length > 90) trails.shift();
+        } else {
+          const localAudioLevel = Math.max(
+            0,
+            audioLevel * ball.audioSensitivity +
+              Math.sin(time * (1.6 + ball.audioSensitivity * 2.2) + ball.audioPhase) * 0.22
+          );
+          const beatPush = localAudioLevel * state.audioMotionAmount;
+          const cx = w / 2;
+          const cy = h / 2;
+          const dx = ball.x - cx;
+          const dy = ball.y - cy;
+          const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+          const nx = dx / distance;
+          const ny = dy / distance;
+
+          const maxRadius = Math.min(w, h) * 0.42;
+          const containment = Math.max(0, distance - maxRadius) / Math.max(1, maxRadius);
+          const inwardForce = containment * 0.065;
+
+          ball.vx += nx * beatPush * 0.006;
+          ball.vy += ny * beatPush * 0.006;
+          ball.vx -= nx * inwardForce;
+          ball.vy -= ny * inwardForce;
+
+          const randomDriftX = Math.sin(time * ball.wanderSpeed + ball.wanderPhaseX) * 0.018;
+          const randomDriftY = Math.cos(time * ball.wanderSpeed * 0.87 + ball.wanderPhaseY) * 0.018;
+          ball.vx += randomDriftX;
+          ball.vy += randomDriftY;
+          ball.vx *= 0.992;
+          ball.vy *= 0.992;
+
+          ball.x += ball.vx;
+          ball.y += ball.vy;
+        }
+
+        if (ball.x < -ball.radius) ball.x = w + ball.radius;
+        if (ball.x > w + ball.radius) ball.x = -ball.radius;
+        if (ball.y < -ball.radius) ball.y = h + ball.radius;
+        if (ball.y > h + ball.radius) ball.y = -ball.radius;
+      }
+
+      // Light bounce when balls overlap.
+      for (let i = 0; i < balls.length; i++) {
+        for (let j = i + 1; j < balls.length; j++) {
+          const a = balls[i];
+          const b = balls[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+          const minDistance = (a.radius + b.radius) * 0.42;
+
+          if (distance >= minDistance) continue;
+
+          const nx = dx / distance;
+          const ny = dy / distance;
+          const overlap = minDistance - distance;
+          const bounce = overlap * 0.035;
+
+          if (state.pointer.draggingBall !== a) {
+            a.vx -= nx * bounce;
+            a.vy -= ny * bounce;
+          }
+
+          if (state.pointer.draggingBall !== b) {
+            b.vx += nx * bounce;
+            b.vy += ny * bounce;
+          }
+        }
+      }
+
+      for (const ball of balls) {
+        const localPulseLevel = Math.max(
+          0,
+          audioLevel * ball.audioSensitivity +
+            Math.sin(time * (1.4 + ball.audioSensitivity * 2.0) + ball.audioPhase) * 0.20
+        );
+        const pulse = 1 + Math.sin(time * 0.65 + ball.phase) * 0.08 + localPulseLevel * 0.16;
+        const radius = ball.radius * pulse;
+        const gradient = ctx.createRadialGradient(ball.x, ball.y, 0, ball.x, ball.y, radius);
+        const g = state.gradientAmount;
+        gradient.addColorStop(0, `hsla(${195 - 10 * g}, 100%, ${55 + 11 * g}%, 1)`);
+        gradient.addColorStop(0.28, `hsla(195, 100%, 55%, ${0.82 + 0.13 * g})`);
+        gradient.addColorStop(0.58, `hsla(${195 + 23 * g}, 100%, ${55 - 5 * g}%, ${0.58 + 0.14 * g})`);
+        gradient.addColorStop(0.82, `hsla(${195 + 47 * g}, 100%, ${55 - 17 * g}%, ${0.18 + 0.16 * g})`);
+        gradient.addColorStop(1, `hsla(${195 + 55 * g}, 100%, ${55 - 33 * g}%, 0)`);
+
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    function getAudioContext() {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return null;
+
+      if (!state.audioContext) {
+        state.audioContext = new AudioContextClass();
+      }
+
+      state.audioContext.resume().catch(() => {});
+      return state.audioContext;
+    }
+
+    function playPuniSound(strength = 0.7) {
+      const audio = getAudioContext();
+      if (!audio) return;
+
+      const t = audio.currentTime;
+      const osc = audio.createOscillator();
+      const osc2 = audio.createOscillator();
+      const gain = audio.createGain();
+      const filter = audio.createBiquadFilter();
+
+      osc.type = "triangle";
+      osc2.type = "sine";
+
+      osc.frequency.setValueAtTime(280 + strength * 70, t);
+      osc.frequency.linearRampToValueAtTime(470 + strength * 100, t + 0.045);
+      osc.frequency.exponentialRampToValueAtTime(220 + strength * 45, t + 0.19);
+
+      osc2.frequency.setValueAtTime(620 + strength * 130, t);
+      osc2.frequency.exponentialRampToValueAtTime(390 + strength * 70, t + 0.12);
+
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(2200, t);
+      filter.frequency.exponentialRampToValueAtTime(650, t + 0.18);
+      filter.Q.value = 2.6;
+
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(0.82 + strength * 0.42, t + 0.008);
+      gain.gain.linearRampToValueAtTime(0.34 + strength * 0.16, t + 0.055);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+
+      osc.connect(filter);
+      osc2.connect(filter);
+      filter.connect(gain);
+      gain.connect(audio.destination);
+
+      osc.start(t);
+      osc2.start(t);
+      osc.stop(t + 0.18);
+      osc2.stop(t + 0.13);
+    }
+
+    function enterFullscreen() {
+      if (document.fullscreenElement) return;
+      const element = document.documentElement;
+      if (element.requestFullscreen) element.requestFullscreen().catch(() => {});
+      else if (element.webkitRequestFullscreen) element.webkitRequestFullscreen();
+    }
+
+    function pointerDown(e) {
+      enterFullscreen();
+      getAudioContext();
+
+      state.pointer.x = e.clientX;
+      state.pointer.y = e.clientY;
+      state.pointer.lastX = e.clientX;
+      state.pointer.lastY = e.clientY;
+      state.pointer.velocityX = 0;
+      state.pointer.velocityY = 0;
+      contactPairs.clear();
+
+      let nearest = null;
+      let nearestDistance = Infinity;
+
+      for (const ball of balls) {
+        const dx = ball.x - e.clientX;
+        const dy = ball.y - e.clientY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const hitRadius = Math.max(60, ball.radius * 1.25);
+
+        if (distance < hitRadius && distance < nearestDistance) {
+          nearest = ball;
+          nearestDistance = distance;
+        }
+      }
+
+      if (nearest) {
+        state.pointer.draggingBall = nearest;
+        state.pointer.dragOffsetX = nearest.x - e.clientX;
+        state.pointer.dragOffsetY = nearest.y - e.clientY;
+        nearest.vx = 0;
+        nearest.vy = 0;
+      }
+    }
+
+    function pointerMove(e) {
+      const dx = e.clientX - state.pointer.lastX;
+      const dy = e.clientY - state.pointer.lastY;
+
+      state.pointer.x = e.clientX;
+      state.pointer.y = e.clientY;
+      state.pointer.velocityX = state.pointer.velocityX * 0.72 + dx * 0.28;
+      state.pointer.velocityY = state.pointer.velocityY * 0.72 + dy * 0.28;
+      state.pointer.lastX = e.clientX;
+      state.pointer.lastY = e.clientY;
+
+      const dragged = state.pointer.draggingBall;
+      if (!dragged) return;
+
+      for (const ball of balls) {
+        if (ball === dragged) continue;
+
+        const hitDx = ball.x - dragged.x;
+        const hitDy = ball.y - dragged.y;
+        const distance = Math.sqrt(hitDx * hitDx + hitDy * hitDy);
+        const contactDistance = (ball.radius + dragged.radius) * 0.86;
+        const key = dragged.id < ball.id ? `${dragged.id}-${ball.id}` : `${ball.id}-${dragged.id}`;
+
+        if (distance < contactDistance) {
+          if (!contactPairs.has(key)) {
+            contactPairs.add(key);
+            const strength = Math.min(1, (contactDistance - distance) / contactDistance + 0.25);
+            playPuniSound(strength);
+          }
+        } else {
+          contactPairs.delete(key);
+        }
+      }
+    }
+
+    function pointerUp() {
+      if (state.pointer.draggingBall) {
+        state.pointer.draggingBall.vx = state.pointer.velocityX * 0.18;
+        state.pointer.draggingBall.vy = state.pointer.velocityY * 0.18;
+      }
+
+      state.pointer.draggingBall = null;
+      contactPairs.clear();
+    }
+
+    window.addEventListener("resize", resize);
+    document.addEventListener("fullscreenchange", resize);
+    canvas.addEventListener("pointerdown", pointerDown);
+    canvas.addEventListener("pointermove", pointerMove);
+    canvas.addEventListener("pointerup", pointerUp);
+    canvas.addEventListener("pointerleave", pointerUp);
+
+    resize();
+    requestAnimationFrame(draw);
+  </script>
+</body>
+</html>
