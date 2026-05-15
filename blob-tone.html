@@ -35,11 +35,16 @@
     const ctx = canvas.getContext("2d");
 
     const state = {
-      count: 15,
+      count: 8,
       baseRadius: 85,
       speed: 0.35,
       audioMotionAmount: 0.9,
       gradientAmount: 0,
+      delayTime: 1.2,
+      delayFeedback: 0.68,
+      delayMix: 0.55,
+      reverbMix: 0.9,
+      reverbDecay: 3.6,
       pointer: {
         x: 0,
         y: 0,
@@ -59,6 +64,10 @@
     let nextBallId = 1;
     const contactPairs = new Set();
 
+    function randomRange(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
     function resize() {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = window.innerWidth * dpr;
@@ -69,38 +78,39 @@
       createBalls();
     }
 
-    function randomRange(min, max) {
-      return min + Math.random() * (max - min);
-    }
-
-    function createBall() {
+    function createBall(noteIndex = Math.floor(Math.random() * 8)) {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      const radius = state.baseRadius * randomRange(0.65, 1.55);
+      const noteSizeScales = [1.42, 1.30, 1.18, 1.07, 0.97, 0.88, 0.80, 0.73];
+      const radius = state.baseRadius * noteSizeScales[noteIndex];
 
       return {
         id: nextBallId++,
-        x: randomRange(radius, w - radius),
-        y: randomRange(radius, h - radius),
+        x: randomRange(radius, Math.max(radius, w - radius)),
+        y: randomRange(radius, Math.max(radius, h - radius)),
         vx: randomRange(-1, 1) * state.speed,
         vy: randomRange(-1, 1) * state.speed,
         radius,
+        noteIndex,
         hue: 195,
         saturation: 100,
         lightness: 55,
         phase: randomRange(0, Math.PI * 2),
         audioPhase: randomRange(0, Math.PI * 2),
-        audioSensitivity: randomRange(0.45, 1.35),
+        audioSensitivity: randomRange(0.35, 1.65),
         wanderPhaseX: randomRange(0, Math.PI * 2),
         wanderPhaseY: randomRange(0, Math.PI * 2),
         wanderSpeed: randomRange(0.35, 1.15),
+        timbreOffset: randomRange(-0.18, 0.22),
+        attackOffset: randomRange(0.7, 1.35),
+        toneSpread: randomRange(0.82, 1.22),
       };
     }
 
     function createBalls() {
       contactPairs.clear();
       trails = [];
-      balls = Array.from({ length: state.count }, () => createBall());
+      balls = Array.from({ length: state.count }, (_, index) => createBall(index % 8));
     }
 
     function draw(now = 0) {
@@ -198,7 +208,6 @@
         if (ball.y > h + ball.radius) ball.y = -ball.radius;
       }
 
-      // Light bounce when balls overlap.
       for (let i = 0; i < balls.length; i++) {
         for (let j = i + 1; j < balls.length; j++) {
           const a = balls[i];
@@ -264,45 +273,190 @@
       return state.audioContext;
     }
 
-    function playPuniSound(strength = 0.7) {
+    function createReverbImpulse(audio, decay = 1.8) {
+      const length = Math.floor(audio.sampleRate * decay);
+      const impulse = audio.createBuffer(2, length, audio.sampleRate);
+
+      for (let channel = 0; channel < 2; channel++) {
+        const data = impulse.getChannelData(channel);
+        for (let i = 0; i < length; i++) {
+          const progress = i / length;
+          const smoothNoise = (Math.random() * 2 - 1) * Math.pow(1 - progress, 2.8);
+          data[i] = smoothNoise * 0.55;
+        }
+      }
+
+      return impulse;
+    }
+
+    function playPuniSound(strength = 0.7, sizeTone = 0.5, toneVariation = 0, attackVariation = 1, spreadVariation = 1) {
       const audio = getAudioContext();
       if (!audio) return;
 
-      const t = audio.currentTime;
-      const osc = audio.createOscillator();
-      const osc2 = audio.createOscillator();
-      const gain = audio.createGain();
-      const filter = audio.createBiquadFilter();
+      const now = audio.currentTime;
+      const volumeCurve = Math.pow(strength, 1.65);
+      const pitchScale = 1;
+      const bodyGain = (0.022 + volumeCurve * 0.42) * (0.78 + sizeTone * 0.30);
+      const decayTime = (0.46 + sizeTone * 0.18) * attackVariation;
+      const playfulBend = 1.08 + (1 - sizeTone) * 0.08 + volumeCurve * 0.10;
+      const scaleNotes = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5, 1174.66, 1318.51];
+      const noteIndex = Math.max(0, Math.min(scaleNotes.length - 1, Math.round((1 - sizeTone) * (scaleNotes.length - 1))));
+      const baseFreq = scaleNotes[noteIndex];
 
-      osc.type = "triangle";
-      osc2.type = "sine";
+      const inputGain = audio.createGain();
+      const shimmerGain = audio.createGain();
+      const toneFilter = audio.createBiquadFilter();
+      const airFilter = audio.createBiquadFilter();
+      const outputGain = audio.createGain();
+      const limiter = audio.createDynamicsCompressor();
+      const dryGain = audio.createGain();
+      const delay = audio.createDelay(1.2);
+      const delayGain = audio.createGain();
+      const feedback = audio.createGain();
+      const delayFilter = audio.createBiquadFilter();
+      const convolver = audio.createConvolver();
+      const reverbGain = audio.createGain();
+      const reverbFilter = audio.createBiquadFilter();
+      const caveDelay = audio.createDelay(1.2);
+      const caveDelayGain = audio.createGain();
+      const caveFeedback = audio.createGain();
 
-      osc.frequency.setValueAtTime(280 + strength * 70, t);
-      osc.frequency.linearRampToValueAtTime(470 + strength * 100, t + 0.045);
-      osc.frequency.exponentialRampToValueAtTime(220 + strength * 45, t + 0.19);
+      toneFilter.type = "lowpass";
+      toneFilter.frequency.setValueAtTime(2600 - sizeTone * 520, now);
+      toneFilter.frequency.exponentialRampToValueAtTime(1500 - sizeTone * 280, now + decayTime);
+      toneFilter.Q.value = 0.35;
 
-      osc2.frequency.setValueAtTime(620 + strength * 130, t);
-      osc2.frequency.exponentialRampToValueAtTime(390 + strength * 70, t + 0.12);
+      airFilter.type = "highpass";
+      airFilter.frequency.value = 130 + sizeTone * 45;
+      airFilter.Q.value = 0.5;
 
-      filter.type = "lowpass";
-      filter.frequency.setValueAtTime(2200, t);
-      filter.frequency.exponentialRampToValueAtTime(650, t + 0.18);
-      filter.Q.value = 2.6;
+      dryGain.gain.value = 0.9;
+      delay.delayTime.setValueAtTime(state.delayTime + sizeTone * 0.12, now);
+      delayGain.gain.value = Math.min(state.delayMix, 0.22);
+      feedback.gain.value = Math.min(state.delayFeedback, 0.20);
+      delayFilter.type = "lowpass";
+      delayFilter.frequency.value = 2400;
+      delayFilter.Q.value = 0.7;
 
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.linearRampToValueAtTime(0.82 + strength * 0.42, t + 0.008);
-      gain.gain.linearRampToValueAtTime(0.34 + strength * 0.16, t + 0.055);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      convolver.buffer = createReverbImpulse(audio, state.reverbDecay);
+      reverbGain.gain.value = Math.min(state.reverbMix, 0.28);
+      reverbFilter.type = "lowpass";
+      reverbFilter.frequency.value = 3400;
+      reverbFilter.Q.value = 0.45;
+      caveDelay.delayTime.setValueAtTime(0.18 + sizeTone * 0.04, now);
+      caveDelayGain.gain.value = 0;
+      caveFeedback.gain.value = 0;
 
-      osc.connect(filter);
-      osc2.connect(filter);
-      filter.connect(gain);
-      gain.connect(audio.destination);
+      shimmerGain.gain.value = 0.003 + volumeCurve * 0.006;
 
-      osc.start(t);
-      osc2.start(t);
-      osc.stop(t + 0.18);
-      osc2.stop(t + 0.13);
+      inputGain.connect(toneFilter);
+      toneFilter.connect(airFilter);
+      airFilter.connect(dryGain);
+      dryGain.connect(outputGain);
+
+      airFilter.connect(delay);
+      delay.connect(delayFilter);
+      delayFilter.connect(delayGain);
+      delayGain.connect(outputGain);
+      delayFilter.connect(feedback);
+      feedback.connect(delay);
+
+      shimmerGain.connect(convolver);
+      airFilter.connect(convolver);
+      convolver.connect(reverbFilter);
+      reverbFilter.connect(reverbGain);
+      reverbGain.connect(outputGain);
+
+      airFilter.connect(caveDelay);
+      caveDelay.connect(caveDelayGain);
+      caveDelayGain.connect(outputGain);
+      caveDelay.connect(caveFeedback);
+      caveFeedback.connect(caveDelay);
+
+      limiter.threshold.value = -18;
+      limiter.knee.value = 8;
+      limiter.ratio.value = 12;
+      limiter.attack.value = 0.004;
+      limiter.release.value = 0.18;
+      outputGain.connect(limiter);
+      limiter.connect(audio.destination);
+
+      outputGain.gain.setValueAtTime(0.0001, now);
+      outputGain.gain.linearRampToValueAtTime(bodyGain, now + 0.14);
+      outputGain.gain.setTargetAtTime(0.0001, now + 0.22, decayTime * 0.42);
+
+      function addVoice(type, freqRatio, gainValue, detuneCents) {
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(baseFreq * freqRatio * pitchScale * playfulBend, now);
+        osc.frequency.exponentialRampToValueAtTime(baseFreq * freqRatio * pitchScale, now + 0.055);
+        osc.detune.value = detuneCents;
+
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(gainValue, now + 0.06);
+        gain.gain.setTargetAtTime(0.0001, now + decayTime * 0.45, decayTime * 0.35);
+
+        osc.connect(gain);
+        gain.connect(inputGain);
+        osc.start(now);
+        osc.stop(now + decayTime * 1.35 + 0.08);
+      }
+
+      addVoice("sine", 1.0, 0.46, 0);
+      addVoice("sine", 2.0, 0.026 * (1 - sizeTone * 0.2), 0);
+      addVoice("sine", 3.0, 0.008 * (1 - sizeTone * 0.35), 0);
+
+      if (sizeTone > 0.35) {
+        addVoice("sine", 0.5, 0.018 * sizeTone, 0);
+      }
+
+      const popOsc = audio.createOscillator();
+      const popGain = audio.createGain();
+      popOsc.type = "sine";
+      popOsc.frequency.setValueAtTime(baseFreq * 1.5, now);
+      popOsc.frequency.exponentialRampToValueAtTime(baseFreq * 1.65, now + 0.07);
+      popGain.gain.setValueAtTime(0.0001, now);
+      popGain.gain.linearRampToValueAtTime(0.006 + volumeCurve * 0.014, now + 0.018);
+      popGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.075);
+      popOsc.connect(popGain);
+      popGain.connect(inputGain);
+      popOsc.start(now);
+      popOsc.stop(now + 0.085);
+
+      const shimmerOsc = audio.createOscillator();
+      const shimmerFilter = audio.createBiquadFilter();
+      shimmerOsc.type = "sine";
+      shimmerOsc.frequency.setValueAtTime(baseFreq * 3.0, now);
+      shimmerOsc.frequency.setValueAtTime(baseFreq * 3.0, now + decayTime * 1.35);
+      shimmerFilter.type = "bandpass";
+      shimmerFilter.frequency.value = 2600 + (1 - sizeTone) * 1200;
+      shimmerFilter.Q.value = 2.0;
+      shimmerOsc.connect(shimmerFilter);
+      shimmerFilter.connect(shimmerGain);
+      shimmerOsc.start(now);
+      shimmerOsc.stop(now + decayTime * 1.5);
+
+      const noiseBuffer = audio.createBuffer(1, Math.floor(audio.sampleRate * 0.035), audio.sampleRate);
+      const noiseData = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < noiseData.length; i++) {
+        noiseData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / noiseData.length, 2);
+      }
+
+      const noise = audio.createBufferSource();
+      const noiseGain = audio.createGain();
+      const noiseFilter = audio.createBiquadFilter();
+      noise.buffer = noiseBuffer;
+      noiseFilter.type = "bandpass";
+      noiseFilter.frequency.value = 2400 + (1 - sizeTone) * 1200;
+      noiseFilter.Q.value = 1.2;
+      noiseGain.gain.setValueAtTime(0.00005 + volumeCurve * 0.00035, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+      noise.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(inputGain);
+      noise.start(now);
+      noise.stop(now + 0.05);
     }
 
     function enterFullscreen() {
@@ -372,10 +526,26 @@
         const key = dragged.id < ball.id ? `${dragged.id}-${ball.id}` : `${ball.id}-${dragged.id}`;
 
         if (distance < contactDistance) {
-          if (!contactPairs.has(key)) {
+          const nx = hitDx / Math.max(1, distance);
+          const ny = hitDy / Math.max(1, distance);
+          const dragSpeedTowardBall = state.pointer.velocityX * nx + state.pointer.velocityY * ny;
+          const isPushingIntoBall = dragSpeedTowardBall > 1.2;
+
+          if (!contactPairs.has(key) && isPushingIntoBall) {
             contactPairs.add(key);
-            const strength = Math.min(1, (contactDistance - distance) / contactDistance + 0.25);
-            playPuniSound(strength);
+            ball.vx += nx * dragSpeedTowardBall * 0.05;
+            ball.vy += ny * dragSpeedTowardBall * 0.05;
+
+            const hitStrength = Math.max(0, Math.min(1, (dragSpeedTowardBall - 1.2) / 24));
+            const overlapStrength = Math.max(0, Math.min(1, (contactDistance - distance) / contactDistance));
+            const velocityCurve = Math.pow(hitStrength, 1.8);
+            const strength = Math.max(0.04, Math.min(1, velocityCurve * 0.95 + overlapStrength * 0.1));
+            const playedNoteIndex = ball.noteIndex;
+            const sizeTone = Math.max(0, Math.min(1, 1 - playedNoteIndex / 7));
+            const toneVariation = (dragged.timbreOffset + ball.timbreOffset) * 0.5;
+            const attackVariation = (dragged.attackOffset + ball.attackOffset) * 0.5;
+            const spreadVariation = (dragged.toneSpread + ball.toneSpread) * 0.5;
+            playPuniSound(strength, sizeTone, toneVariation, attackVariation, spreadVariation);
           }
         } else {
           contactPairs.delete(key);
