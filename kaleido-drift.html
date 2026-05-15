@@ -132,6 +132,20 @@
       }
     }
 
+    function drawCenterGuard(w, h) {
+      const radius = Math.min(w, h) * 0.22;
+      const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+      gradient.addColorStop(0, "rgba(0,0,0,0.38)");
+      gradient.addColorStop(0.42, "rgba(0,0,0,0.18)");
+      gradient.addColorStop(1, "rgba(0,0,0,0)");
+
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     function draw(now = 0) {
       const w = window.innerWidth;
       const h = window.innerHeight;
@@ -196,6 +210,8 @@
         ctx.fillStyle = `hsla(${dot.hue}, ${dot.saturation}%, ${dot.lightness}%, ${Math.min(1, dot.alpha * state.blendStrength)})`;
         drawKaleidoDot(dot.x, dot.y, dot.size, dot.alpha, now);
       }
+
+      drawCenterGuard(w, h);
 
       ctx.restore();
 
