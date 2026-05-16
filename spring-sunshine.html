@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Spring Sunshine</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      user-select: none;
+      touch-action: none;
+    }
+
+    .stage {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .grid {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100vw;
+      height: 100vh;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, var(--cell-size, 128px));
+      grid-auto-rows: var(--cell-size, 128px);
+      gap: 0;
+      will-change: transform;
+    }
+
+    .cell {
+      mix-blend-mode: var(--blend-mode, plus-lighter);
+      width: var(--cell-size, 128px);
+      height: var(--cell-size, 128px);
+      border-radius: 0;
+      opacity: var(--cell-opacity, 0.19);
+      transform: rotate(45deg)
+        scale(
+          calc(var(--current-x, 2) + var(--ripple, 0)),
+          calc(var(--current-y, 2) + var(--ripple, 0))
+        );
+      will-change: transform;
+    }
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <script>
+    const referenceWidth = 1240;
+    const referenceHeight = 580;
+
+    let size = 128;
+    let scaledSize = 128;
+    let density = 1;
+    let baseScale = 2;
+    let maxStretch = 0.25;
+    let cellOpacity = 0.19;
+    let rippleSize = 0.4;
+
+    let animationDuration = 5000;
+    let expandDuration = animationDuration;
+    let expandedHoldDuration = animationDuration;
+    let shrinkDuration = animationDuration;
+    let shrunkenHoldDuration = animationDuration;
+    let pulseDuration = expandDuration + expandedHoldDuration + shrinkDuration + shrunkenHoldDuration;
+    let turnStartTime = performance.now();
+
+    let startX = 2;
+    let startY = 2;
+    let stretchX = 2.5;
+    let stretchY = 2.2;
+    let endX = 2;
+    let endY = 2;
+
+    const extraRows = 12;
+    const scrollSpeed = 0.6;
+    const ripples = [];
+
+    let audioContext = null;
+    let bgmStarted = false;
+    let bgmStep = 0;
+    const bgmNodes = [];
+
+    let y = 0;
+    let lastTime = performance.now();
+    let isPointerDown = false;
+    let lastRippleX = 0;
+    let lastRippleY = 0;
+    let lastRippleTime = 0;
+
+    const colors = [
+      "rgba(255, 255, 255, 1)",
+      "rgba(0, 101, 153, 1)",
+      "rgba(0, 255, 203, 1)",
+      "rgba(153, 255, 153, 1)",
+      "rgba(153, 101, 255, 1)",
+      "rgba(153, 0, 204, 1)",
+      "rgba(255, 153, 255, 1)",
+      "rgba(255, 204, 153, 1)",
+      "rgba(255, 255, 50, 1)",
+      "rgba(101, 152, 255, 1)",
+      "rgba(255, 0, 204, 1)",
+      "rgba(255, 0, 102, 1)",
+      "rgba(102, 51, 102, 1)",
+      "rgba(153, 204, 0, 1)"
+    ];
+
+    const grid = document.getElementById("grid");
+
+    function randomRange(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function colorForIndex(index) {
+      const pseudoRandom = Math.abs(Math.sin(index * 12.9898) * 43758.5453);
+      const colorIndex = Math.floor(pseudoRandom) % colors.length;
+      return colors[colorIndex];
+    }
+
+    function randomBaseScale() {
+      return {
+        x: baseScale * randomRange(0.72, 1.28),
+        y: baseScale * randomRange(0.72, 1.28),
+      };
+    }
+
+    function setNextTurnShape() {
+      startX = endX;
+      startY = endY;
+      stretchX = startX + (randomRange(1.4, 5.2) - startX) * maxStretch;
+      stretchY = startY + (randomRange(1.0, 4.2) - startY) * maxStretch;
+      const nextBase = randomBaseScale();
+      endX = nextBase.x;
+      endY = nextBase.y;
+    }
+
+    function randomizeTurnDuration() {
+      const factor = randomRange(0.85, 1.18);
+      const duration = animationDuration * factor;
+      expandDuration = duration;
+      expandedHoldDuration = duration;
+      shrinkDuration = duration;
+      shrunkenHoldDuration = duration;
+      pulseDuration = expandDuration + expandedHoldDuration + shrinkDuration + shrunkenHoldDuration;
+    }
+
+    function setCurrentScale(x, yScale) {
+      grid.style.setProperty("--current-x", x.toFixed(3));
+      grid.style.setProperty("--current-y", yScale.toFixed(3));
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function updateScaledSize() {
+      const scale = Math.min(
+        window.innerWidth / referenceWidth,
+        window.innerHeight / referenceHeight
+      );
+      scaledSize = Math.max(18, size * scale);
+    }
+
+    function buildGrid() {
+      grid.innerHTML = "";
+      updateScaledSize();
+      document.documentElement.style.setProperty("--cell-size", `${scaledSize}px`);
+      grid.style.setProperty("--cell-opacity", cellOpacity);
+      grid.style.setProperty("--blend-mode", "plus-lighter");
+
+      const loopHeight = scaledSize * extraRows;
+      const horizontalPadding = scaledSize * 8;
+      grid.style.left = `${-horizontalPadding / 2}px`;
+      grid.style.width = `calc(100vw + ${horizontalPadding}px)`;
+      grid.style.top = `${-loopHeight}px`;
+      grid.style.height = `calc(100vh + ${loopHeight * 2}px)`;
+
+      const columns = Math.ceil((window.innerWidth + horizontalPadding) / scaledSize) + 4;
+      const rows = Math.ceil(window.innerHeight / scaledSize) + extraRows * 2;
+      const total = Math.max(1, Math.floor(columns * rows * density));
+
+      for (let i = 0; i < total; i++) {
+        const cell = document.createElement("div");
+        cell.className = "cell";
+        cell.style.background = colorForIndex(i);
+        grid.appendChild(cell);
+      }
+    }
+
+    function wrapPosition() {
+      const loopHeight = scaledSize * extraRows;
+      if (y >= loopHeight) y -= loopHeight;
+      if (y < 0) y += loopHeight;
+    }
+
+    function getAudioContext() {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return null;
+      if (!audioContext) audioContext = new AudioContextClass();
+      audioContext.resume().catch(() => {});
+      return audioContext;
+    }
+
+    function startBgm() {
+      const audio = getAudioContext();
+      if (!audio || bgmStarted) return;
+      bgmStarted = true;
+      audio.resume().catch(() => {});
+
+      const master = audio.createGain();
+      const filter = audio.createBiquadFilter();
+      const delay = audio.createDelay(1.2);
+      const delayGain = audio.createGain();
+      const feedback = audio.createGain();
+
+      master.gain.value = 0.08;
+      filter.type = "lowpass";
+      filter.frequency.value = 2400;
+      filter.Q.value = 0.6;
+      delay.delayTime.value = 0.48;
+      delayGain.gain.value = 0.18;
+      feedback.gain.value = 0.22;
+
+      master.connect(filter);
+      filter.connect(audio.destination);
+      filter.connect(delay);
+      delay.connect(delayGain);
+      delayGain.connect(audio.destination);
+      delay.connect(feedback);
+      feedback.connect(delay);
+
+      const chordSets = [
+        [261.63, 329.63, 392.0, 523.25],
+        [293.66, 349.23, 440.0, 587.33],
+        [329.63, 392.0, 493.88, 659.25],
+        [349.23, 440.0, 523.25, 698.46]
+      ];
+
+      function playPadChord() {
+        const chord = chordSets[bgmStep % chordSets.length];
+        const start = audio.currentTime;
+        bgmStep += 1;
+
+        chord.forEach((freq, index) => {
+          const osc = audio.createOscillator();
+          const gain = audio.createGain();
+          const pan = audio.createStereoPanner ? audio.createStereoPanner() : null;
+
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(freq * randomRange(0.995, 1.005), start);
+          osc.detune.value = randomRange(-4, 4);
+
+          gain.gain.setValueAtTime(0.0001, start);
+          gain.gain.linearRampToValueAtTime(0.035 - index * 0.004, start + 1.2);
+          gain.gain.linearRampToValueAtTime(0.018, start + 5.2);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + 7.2);
+
+          if (pan) {
+            pan.pan.value = -0.45 + index * 0.3;
+            osc.connect(gain);
+            gain.connect(pan);
+            pan.connect(master);
+            bgmNodes.push(osc, gain, pan);
+          } else {
+            osc.connect(gain);
+            gain.connect(master);
+            bgmNodes.push(osc, gain);
+          }
+
+          osc.start(start);
+          osc.stop(start + 7.5);
+        });
+      }
+
+      playPadChord();
+      bgmNodes.push(setInterval(playPadChord, 5600));
+      bgmNodes.push(master, filter, delay, delayGain, feedback);
+    }
+
+    function addRipple(x, yPosition, shouldStartBgm = true) {
+      ripples.push({ x, y: yPosition, startTime: performance.now() });
+      if (ripples.length > 8) ripples.shift();
+      if (shouldStartBgm) startBgm();
+    }
+
+    function updateRipples(now) {
+      const waveSpeed = 0.55;
+      const waveWidth = scaledSize * 1.8 * rippleSize;
+      const maxAge = 2200;
+
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        if (now - ripples[i].startTime > maxAge) ripples.splice(i, 1);
+      }
+
+      for (const cell of grid.children) {
+        let rippleValue = 0;
+        const rect = cell.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+
+        for (const ripple of ripples) {
+          const age = now - ripple.startTime;
+          const radius = age * waveSpeed;
+          const dx = cx - ripple.x;
+          const dy = cy - ripple.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          const wave = Math.exp(-Math.pow((distance - radius) / waveWidth, 2));
+          const fade = Math.max(0, 1 - age / maxAge);
+          rippleValue += wave * fade * 0.85 * rippleSize;
+        }
+
+        cell.style.setProperty("--ripple", rippleValue.toFixed(3));
+      }
+    }
+
+    function updatePulse(now) {
+      let turnTime = now - turnStartTime;
+
+      if (turnTime >= pulseDuration) {
+        turnStartTime = now;
+        setNextTurnShape();
+        randomizeTurnDuration();
+        turnTime = 0;
+      }
+
+      let currentX = startX;
+      let currentY = startY;
+
+      if (turnTime < expandDuration) {
+        const phase = turnTime / expandDuration;
+        const ease = (1 - Math.cos(phase * Math.PI)) * 0.5;
+        currentX = lerp(startX, stretchX, ease);
+        currentY = lerp(startY, stretchY, ease);
+      } else if (turnTime < expandDuration + expandedHoldDuration) {
+        currentX = stretchX;
+        currentY = stretchY;
+      } else if (turnTime < expandDuration + expandedHoldDuration + shrinkDuration) {
+        const phase = (turnTime - expandDuration - expandedHoldDuration) / shrinkDuration;
+        const ease = (1 - Math.cos(phase * Math.PI)) * 0.5;
+        currentX = lerp(stretchX, endX, ease);
+        currentY = lerp(stretchY, endY, ease);
+      } else {
+        currentX = endX;
+        currentY = endY;
+      }
+
+      setCurrentScale(currentX, currentY);
+    }
+
+    function animate(now) {
+      const delta = Math.min(32, now - lastTime);
+      lastTime = now;
+
+      updatePulse(now);
+      y += scrollSpeed * (delta / 30);
+      wrapPosition();
+      grid.style.transform = `translateY(${y}px)`;
+      updateRipples(now);
+      requestAnimationFrame(animate);
+    }
+
+    function enterFullscreen() {
+      if (document.fullscreenElement) return;
+      const element = document.documentElement;
+
+      if (element.requestFullscreen) {
+        element.requestFullscreen().catch(() => {});
+      } else if (element.webkitRequestFullscreen) {
+        element.webkitRequestFullscreen();
+      }
+    }
+
+    function pointerDown(event) {
+      enterFullscreen();
+      isPointerDown = true;
+      lastRippleX = event.clientX;
+      lastRippleY = event.clientY;
+      lastRippleTime = performance.now();
+      startBgm();
+      addRipple(event.clientX, event.clientY, false);
+
+      if (event.target.setPointerCapture && event.pointerId != null) {
+        event.target.setPointerCapture(event.pointerId);
+      }
+
+      event.preventDefault();
+    }
+
+    function pointerMove(event) {
+      if (!isPointerDown) return;
+
+      const now = performance.now();
+      const dx = event.clientX - lastRippleX;
+      const dy = event.clientY - lastRippleY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance > scaledSize * 0.35 || now - lastRippleTime > 140) {
+        addRipple(event.clientX, event.clientY, false);
+        lastRippleX = event.clientX;
+        lastRippleY = event.clientY;
+        lastRippleTime = now;
+      }
+
+      event.preventDefault();
+    }
+
+    function pointerUp() {
+      isPointerDown = false;
+    }
+
+    window.addEventListener("resize", () => {
+      y = 0;
+      buildGrid();
+    });
+    window.addEventListener("pointerdown", pointerDown);
+    window.addEventListener("pointermove", pointerMove);
+    window.addEventListener("pointerup", pointerUp);
+    window.addEventListener("pointercancel", pointerUp);
+
+    const initialBase = randomBaseScale();
+    startX = initialBase.x;
+    startY = initialBase.y;
+    endX = initialBase.x;
+    endY = initialBase.y;
+    setNextTurnShape();
+    randomizeTurnDuration();
+    buildGrid();
+    startBgm();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
