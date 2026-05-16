@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Spring Sunshine</title>
+  <title>Spring Sunshine Canvas</title>
   <style>
     html,
     body {
@@ -16,53 +16,47 @@
       touch-action: none;
     }
 
-    .stage {
+    canvas {
       position: fixed;
       inset: 0;
-      overflow: hidden;
+      display: block;
+      width: 100vw;
+      height: 100dvh;
+      min-height: 100vh;
       background: #000;
-    }
-
-    .grid {
-      position: absolute;
-      display: grid;
-      grid-template-columns: repeat(var(--columns), var(--cell-size));
-      grid-auto-rows: var(--cell-size);
-      gap: 0;
-      will-change: transform;
-    }
-
-    .cell {
-      mix-blend-mode: var(--blend-mode, plus-lighter);
-      width: var(--cell-size, 128px);
-      height: var(--cell-size, 128px);
-      border-radius: 0;
-      opacity: var(--cell-opacity, 0.19);
-      transform: rotate(45deg)
-        scale(
-          calc(var(--current-x, 2) + var(--ripple, 0)),
-          calc(var(--current-y, 2) + var(--ripple, 0))
-        );
-      will-change: transform;
     }
   </style>
 </head>
 <body>
-  <div class="stage">
-    <div class="grid" id="gridA"></div>
-    <div class="grid" id="gridB"></div>
-  </div>
+  <canvas id="canvas"></canvas>
 
   <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
     const referenceWidth = 1240;
     const referenceHeight = 580;
-    let size = 128;
-    let scaledSize = 128;
-    let density = 1;
-    let baseScale = 2;
-    let maxStretch = 0.25;
-    let cellOpacity = 0.19;
-    let rippleSize = 0.4;
+
+    const baseSize = 128;
+    const density = 1;
+    const baseScale = 2;
+    const stretchAmount = 0.25;
+    const cellOpacity = 0.19;
+    const rippleSize = 0.4;
+    const scrollSpeed = 0.6;
+
+    let width = 0;
+    let height = 0;
+    let dpr = 1;
+    let scaledSize = baseSize;
+    let columns = 0;
+    let rows = 0;
+    let horizontalPadding = 0;
+    let gridHeight = 0;
+    let y = 0;
+
+    let lastTime = performance.now();
+    let turnStartTime = performance.now();
 
     let animationDuration = 5000;
     let expandDuration = animationDuration;
@@ -70,7 +64,6 @@
     let shrinkDuration = animationDuration;
     let shrunkenHoldDuration = animationDuration;
     let pulseDuration = expandDuration + expandedHoldDuration + shrinkDuration + shrunkenHoldDuration;
-    let turnStartTime = performance.now();
 
     let startX = 2;
     let startY = 2;
@@ -78,23 +71,19 @@
     let stretchY = 2.2;
     let endX = 2;
     let endY = 2;
+    let currentScaleX = 2;
+    let currentScaleY = 2;
 
-    const extraRows = 12;
-    const scrollSpeed = 0.6;
+    let isPointerDown = false;
+    let lastRippleX = 0;
+    let lastRippleY = 0;
+    let lastRippleTime = 0;
     const ripples = [];
 
     let audioContext = null;
     let bgmStarted = false;
     let bgmStep = 0;
     const bgmNodes = [];
-
-    let y = 0;
-    let gridHeight = 1;
-    let lastTime = performance.now();
-    let isPointerDown = false;
-    let lastRippleX = 0;
-    let lastRippleY = 0;
-    let lastRippleTime = 0;
 
     const colors = [
       "rgba(255, 255, 255, 1)",
@@ -113,17 +102,11 @@
       "rgba(153, 204, 0, 1)"
     ];
 
-    const gridA = document.getElementById("gridA");
-    const gridB = document.getElementById("gridB");
-    const grids = [gridA, gridB];
-    const rootStyle = document.documentElement.style;
-
     function randomRange(min, max) {
       return min + Math.random() * (max - min);
     }
 
     function colorForCell(col, row) {
-      // gridA/gridB use the same row/col pattern, so the loop connects smoothly.
       const seed = col * 37.17 + row * 91.73;
       const pseudoRandom = Math.abs(Math.sin(seed * 12.9898) * 43758.5453);
       const colorIndex = Math.floor(pseudoRandom) % colors.length;
@@ -140,8 +123,8 @@
     function setNextTurnShape() {
       startX = endX;
       startY = endY;
-      stretchX = startX + (randomRange(1.4, 5.2) - startX) * maxStretch;
-      stretchY = startY + (randomRange(1.0, 4.2) - startY) * maxStretch;
+      stretchX = startX + (randomRange(1.4, 5.2) - startX) * stretchAmount;
+      stretchY = startY + (randomRange(1.0, 4.2) - startY) * stretchAmount;
       const nextBase = randomBaseScale();
       endX = nextBase.x;
       endY = nextBase.y;
@@ -157,62 +140,37 @@
       pulseDuration = expandDuration + expandedHoldDuration + shrinkDuration + shrunkenHoldDuration;
     }
 
-    function setCurrentScale(x, yScale) {
-      rootStyle.setProperty("--current-x", x.toFixed(3));
-      rootStyle.setProperty("--current-y", yScale.toFixed(3));
-    }
-
     function lerp(a, b, t) {
       return a + (b - a) * t;
     }
 
-    function updateScaledSize() {
-      const scale = Math.min(
-        window.innerWidth / referenceWidth,
-        window.innerHeight / referenceHeight
+    function resize() {
+      dpr = window.devicePixelRatio || 1;
+
+      width = Math.max(
+        window.innerWidth,
+        document.documentElement.clientWidth,
+        window.visualViewport ? window.visualViewport.width : 0
       );
-      scaledSize = Math.max(18, size * scale);
-    }
+      height = Math.max(
+        window.innerHeight,
+        document.documentElement.clientHeight,
+        window.visualViewport ? window.visualViewport.height : 0
+      );
 
-    function buildOneGrid(targetGrid, columns, rows, horizontalPadding) {
-      targetGrid.innerHTML = "";
-      targetGrid.style.setProperty("--columns", columns);
-      targetGrid.style.setProperty("--cell-opacity", cellOpacity);
-      targetGrid.style.setProperty("--blend-mode", "plus-lighter");
-      targetGrid.style.left = `${-horizontalPadding / 2}px`;
-      targetGrid.style.width = `${columns * scaledSize}px`;
-      targetGrid.style.height = `${rows * scaledSize}px`;
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const total = columns * rows;
-      for (let i = 0; i < total; i++) {
-        const cell = document.createElement("div");
-        const col = i % columns;
-        const row = Math.floor(i / columns);
-        cell.className = "cell";
-        cell.style.background = colorForCell(col, row);
-        targetGrid.appendChild(cell);
-      }
-    }
-
-    function buildGrid() {
-      updateScaledSize();
-      rootStyle.setProperty("--cell-size", `${scaledSize}px`);
-
-      const horizontalPadding = scaledSize * 8;
-      const columns = Math.ceil((window.innerWidth + horizontalPadding) / scaledSize) + 4;
-      const rows = Math.ceil(window.innerHeight / scaledSize) + extraRows * 2;
+      const scale = Math.min(width / referenceWidth, height / referenceHeight);
+      scaledSize = Math.max(18, baseSize * scale);
+      horizontalPadding = scaledSize * 8;
+      columns = Math.ceil((width + horizontalPadding) / scaledSize) + 4;
+      rows = Math.ceil(height / scaledSize) + 36;
       gridHeight = rows * scaledSize;
-
-      buildOneGrid(gridA, columns, rows, horizontalPadding);
-      buildOneGrid(gridB, columns, rows, horizontalPadding);
-
       y = ((y % gridHeight) + gridHeight) % gridHeight;
-      positionGrids();
-    }
-
-    function positionGrids() {
-      gridA.style.transform = `translateY(${y - gridHeight}px)`;
-      gridB.style.transform = `translateY(${y}px)`;
     }
 
     function wrapPosition() {
@@ -304,42 +262,19 @@
       bgmNodes.push(master, filter, delay, delayGain, feedback);
     }
 
-    function addRipple(x, yPosition, shouldStartBgm = true) {
-      ripples.push({ x, y: yPosition, startTime: performance.now() });
-      if (ripples.length > 8) ripples.shift();
-      if (shouldStartBgm) startBgm();
+    function enterFullscreen() {
+      if (document.fullscreenElement) return;
+      const element = document.documentElement;
+      if (element.requestFullscreen) {
+        element.requestFullscreen().catch(() => {});
+      } else if (element.webkitRequestFullscreen) {
+        element.webkitRequestFullscreen();
+      }
     }
 
-    function updateRipples(now) {
-      const waveSpeed = 0.55;
-      const waveWidth = scaledSize * 1.8 * rippleSize;
-      const maxAge = 2200;
-
-      for (let i = ripples.length - 1; i >= 0; i--) {
-        if (now - ripples[i].startTime > maxAge) ripples.splice(i, 1);
-      }
-
-      for (const targetGrid of grids) {
-        for (const cell of targetGrid.children) {
-          let rippleValue = 0;
-          const rect = cell.getBoundingClientRect();
-          const cx = rect.left + rect.width / 2;
-          const cy = rect.top + rect.height / 2;
-
-          for (const ripple of ripples) {
-            const age = now - ripple.startTime;
-            const radius = age * waveSpeed;
-            const dx = cx - ripple.x;
-            const dy = cy - ripple.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            const wave = Math.exp(-Math.pow((distance - radius) / waveWidth, 2));
-            const fade = Math.max(0, 1 - age / maxAge);
-            rippleValue += wave * fade * 0.85 * rippleSize;
-          }
-
-          cell.style.setProperty("--ripple", rippleValue.toFixed(3));
-        }
-      }
+    function addRipple(x, yPosition) {
+      ripples.push({ x, y: yPosition, startTime: performance.now() });
+      if (ripples.length > 8) ripples.shift();
     }
 
     function updatePulse(now) {
@@ -352,28 +287,79 @@
         turnTime = 0;
       }
 
-      let currentX = startX;
-      let currentY = startY;
-
       if (turnTime < expandDuration) {
         const phase = turnTime / expandDuration;
         const ease = (1 - Math.cos(phase * Math.PI)) * 0.5;
-        currentX = lerp(startX, stretchX, ease);
-        currentY = lerp(startY, stretchY, ease);
+        currentScaleX = lerp(startX, stretchX, ease);
+        currentScaleY = lerp(startY, stretchY, ease);
       } else if (turnTime < expandDuration + expandedHoldDuration) {
-        currentX = stretchX;
-        currentY = stretchY;
+        currentScaleX = stretchX;
+        currentScaleY = stretchY;
       } else if (turnTime < expandDuration + expandedHoldDuration + shrinkDuration) {
         const phase = (turnTime - expandDuration - expandedHoldDuration) / shrinkDuration;
         const ease = (1 - Math.cos(phase * Math.PI)) * 0.5;
-        currentX = lerp(stretchX, endX, ease);
-        currentY = lerp(stretchY, endY, ease);
+        currentScaleX = lerp(stretchX, endX, ease);
+        currentScaleY = lerp(stretchY, endY, ease);
       } else {
-        currentX = endX;
-        currentY = endY;
+        currentScaleX = endX;
+        currentScaleY = endY;
+      }
+    }
+
+    function rippleAt(x, yPosition, now) {
+      const waveSpeed = 0.55;
+      const waveWidth = scaledSize * 1.8 * rippleSize;
+      const maxAge = 2200;
+      let value = 0;
+
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        const ripple = ripples[i];
+        const age = now - ripple.startTime;
+        if (age > maxAge) {
+          ripples.splice(i, 1);
+          continue;
+        }
+
+        const radius = age * waveSpeed;
+        const dx = x - ripple.x;
+        const dy = yPosition - ripple.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const wave = Math.exp(-Math.pow((distance - radius) / waveWidth, 2));
+        const fade = Math.max(0, 1 - age / maxAge);
+        value += wave * fade * 0.85 * rippleSize;
       }
 
-      setCurrentScale(currentX, currentY);
+      return value;
+    }
+
+    function drawCell(x, yPosition, color, scaleX, scaleY) {
+      ctx.save();
+      ctx.translate(x + scaledSize / 2, yPosition + scaledSize / 2);
+      ctx.rotate(Math.PI / 4);
+      ctx.scale(scaleX, scaleY);
+      ctx.globalAlpha = cellOpacity;
+      ctx.fillStyle = color;
+      ctx.fillRect(-scaledSize / 2, -scaledSize / 2, scaledSize, scaledSize);
+      ctx.restore();
+    }
+
+    function drawGrid(offsetY, now) {
+      const startX = -horizontalPadding / 2;
+
+      for (let row = 0; row < rows; row++) {
+        const yPosition = offsetY + row * scaledSize;
+        if (yPosition > height + scaledSize * 4 || yPosition < -scaledSize * 8) continue;
+
+        for (let col = 0; col < columns; col++) {
+          const x = startX + col * scaledSize;
+          if (x > width + scaledSize * 4 || x < -scaledSize * 8) continue;
+
+          const cx = x + scaledSize / 2;
+          const cy = yPosition + scaledSize / 2;
+          const ripple = rippleAt(cx, cy, now);
+          drawCell(x, yPosition, colorForCell(col, row), currentScaleX + ripple, currentScaleY + ripple);
+        }
+      }
     }
 
     function animate(now) {
@@ -383,19 +369,20 @@
       updatePulse(now);
       y += scrollSpeed * (delta / 30);
       wrapPosition();
-      positionGrids();
-      updateRipples(now);
-      requestAnimationFrame(animate);
-    }
 
-    function enterFullscreen() {
-      if (document.fullscreenElement) return;
-      const element = document.documentElement;
-      if (element.requestFullscreen) {
-        element.requestFullscreen().catch(() => {});
-      } else if (element.webkitRequestFullscreen) {
-        element.webkitRequestFullscreen();
-      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.globalCompositeOperation = "lighter";
+      drawGrid(y - gridHeight, now);
+      drawGrid(y, now);
+      drawGrid(y + gridHeight, now);
+      ctx.globalCompositeOperation = "source-over";
+
+      requestAnimationFrame(animate);
     }
 
     function pointerDown(event) {
@@ -405,12 +392,7 @@
       lastRippleY = event.clientY;
       lastRippleTime = performance.now();
       startBgm();
-      addRipple(event.clientX, event.clientY, false);
-
-      if (event.target.setPointerCapture && event.pointerId != null) {
-        event.target.setPointerCapture(event.pointerId);
-      }
-
+      addRipple(event.clientX, event.clientY);
       event.preventDefault();
     }
 
@@ -423,7 +405,7 @@
       const distance = Math.sqrt(dx * dx + dy * dy);
 
       if (distance > scaledSize * 0.35 || now - lastRippleTime > 140) {
-        addRipple(event.clientX, event.clientY, false);
+        addRipple(event.clientX, event.clientY);
         lastRippleX = event.clientX;
         lastRippleY = event.clientY;
         lastRippleTime = now;
@@ -437,21 +419,34 @@
     }
 
     let lastWindowWidth = window.innerWidth;
-
     window.addEventListener("resize", () => {
       const widthDiff = Math.abs(window.innerWidth - lastWindowWidth);
       if (widthDiff > 80) {
         lastWindowWidth = window.innerWidth;
         y = 0;
-        buildGrid();
+        resize();
       }
+    });
+
+    document.addEventListener("fullscreenchange", () => {
+      setTimeout(() => {
+        y = 0;
+        resize();
+      }, 80);
+    });
+
+    document.addEventListener("webkitfullscreenchange", () => {
+      setTimeout(() => {
+        y = 0;
+        resize();
+      }, 80);
     });
 
     window.addEventListener("orientationchange", () => {
       setTimeout(() => {
         lastWindowWidth = window.innerWidth;
         y = 0;
-        buildGrid();
+        resize();
       }, 300);
     });
 
@@ -467,7 +462,7 @@
     endY = initialBase.y;
     setNextTurnShape();
     randomizeTurnDuration();
-    buildGrid();
+    resize();
     startBgm();
     requestAnimationFrame(animate);
   </script>
