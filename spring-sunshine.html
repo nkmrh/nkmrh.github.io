@@ -25,13 +25,9 @@
 
     .grid {
       position: absolute;
-      left: 0;
-      top: 0;
-      width: 100vw;
-      height: 100vh;
       display: grid;
-      grid-template-columns: repeat(auto-fill, var(--cell-size, 128px));
-      grid-auto-rows: var(--cell-size, 128px);
+      grid-template-columns: repeat(var(--columns), var(--cell-size));
+      grid-auto-rows: var(--cell-size);
       gap: 0;
       will-change: transform;
     }
@@ -53,13 +49,13 @@
 </head>
 <body>
   <div class="stage">
-    <div class="grid" id="grid"></div>
+    <div class="grid" id="gridA"></div>
+    <div class="grid" id="gridB"></div>
   </div>
 
   <script>
     const referenceWidth = 1240;
     const referenceHeight = 580;
-
     let size = 128;
     let scaledSize = 128;
     let density = 1;
@@ -93,6 +89,7 @@
     const bgmNodes = [];
 
     let y = 0;
+    let gridHeight = 1;
     let lastTime = performance.now();
     let isPointerDown = false;
     let lastRippleX = 0;
@@ -116,17 +113,18 @@
       "rgba(153, 204, 0, 1)"
     ];
 
-    const grid = document.getElementById("grid");
+    const gridA = document.getElementById("gridA");
+    const gridB = document.getElementById("gridB");
+    const grids = [gridA, gridB];
+    const rootStyle = document.documentElement.style;
 
     function randomRange(min, max) {
       return min + Math.random() * (max - min);
     }
 
     function colorForCell(col, row) {
-      // Keep the color pattern stable when the vertical scroll loops.
-      // Rows repeat every extraRows so the loop boundary does not flash to a new palette.
-      const repeatRow = row % extraRows;
-      const seed = col * 37.17 + repeatRow * 91.73;
+      // gridA/gridB use the same row/col pattern, so the loop connects smoothly.
+      const seed = col * 37.17 + row * 91.73;
       const pseudoRandom = Math.abs(Math.sin(seed * 12.9898) * 43758.5453);
       const colorIndex = Math.floor(pseudoRandom) % colors.length;
       return colors[colorIndex];
@@ -160,8 +158,8 @@
     }
 
     function setCurrentScale(x, yScale) {
-      grid.style.setProperty("--current-x", x.toFixed(3));
-      grid.style.setProperty("--current-y", yScale.toFixed(3));
+      rootStyle.setProperty("--current-x", x.toFixed(3));
+      rootStyle.setProperty("--current-y", yScale.toFixed(3));
     }
 
     function lerp(a, b, t) {
@@ -176,38 +174,50 @@
       scaledSize = Math.max(18, size * scale);
     }
 
-    function buildGrid() {
-      grid.innerHTML = "";
-      updateScaledSize();
-      document.documentElement.style.setProperty("--cell-size", `${scaledSize}px`);
-      grid.style.setProperty("--cell-opacity", cellOpacity);
-      grid.style.setProperty("--blend-mode", "plus-lighter");
+    function buildOneGrid(targetGrid, columns, rows, horizontalPadding) {
+      targetGrid.innerHTML = "";
+      targetGrid.style.setProperty("--columns", columns);
+      targetGrid.style.setProperty("--cell-opacity", cellOpacity);
+      targetGrid.style.setProperty("--blend-mode", "plus-lighter");
+      targetGrid.style.left = `${-horizontalPadding / 2}px`;
+      targetGrid.style.width = `${columns * scaledSize}px`;
+      targetGrid.style.height = `${rows * scaledSize}px`;
 
-      const loopHeight = scaledSize * extraRows;
-      const horizontalPadding = scaledSize * 8;
-      grid.style.left = `${-horizontalPadding / 2}px`;
-      grid.style.width = `calc(100vw + ${horizontalPadding}px)`;
-      grid.style.top = `${-loopHeight}px`;
-      grid.style.height = `calc(100vh + ${loopHeight * 2}px)`;
-
-      const columns = Math.ceil((window.innerWidth + horizontalPadding) / scaledSize) + 4;
-      const rows = Math.ceil(window.innerHeight / scaledSize) + extraRows * 2;
-      const total = Math.max(1, Math.floor(columns * rows * density));
-
+      const total = columns * rows;
       for (let i = 0; i < total; i++) {
         const cell = document.createElement("div");
         const col = i % columns;
         const row = Math.floor(i / columns);
         cell.className = "cell";
         cell.style.background = colorForCell(col, row);
-        grid.appendChild(cell);
+        targetGrid.appendChild(cell);
       }
     }
 
+    function buildGrid() {
+      updateScaledSize();
+      rootStyle.setProperty("--cell-size", `${scaledSize}px`);
+
+      const horizontalPadding = scaledSize * 8;
+      const columns = Math.ceil((window.innerWidth + horizontalPadding) / scaledSize) + 4;
+      const rows = Math.ceil(window.innerHeight / scaledSize) + extraRows * 2;
+      gridHeight = rows * scaledSize;
+
+      buildOneGrid(gridA, columns, rows, horizontalPadding);
+      buildOneGrid(gridB, columns, rows, horizontalPadding);
+
+      y = ((y % gridHeight) + gridHeight) % gridHeight;
+      positionGrids();
+    }
+
+    function positionGrids() {
+      gridA.style.transform = `translateY(${y - gridHeight}px)`;
+      gridB.style.transform = `translateY(${y}px)`;
+    }
+
     function wrapPosition() {
-      const loopHeight = scaledSize * extraRows;
-      if (y >= loopHeight) y -= loopHeight;
-      if (y < 0) y += loopHeight;
+      if (y >= gridHeight) y -= gridHeight;
+      if (y < 0) y += gridHeight;
     }
 
     function getAudioContext() {
@@ -309,24 +319,26 @@
         if (now - ripples[i].startTime > maxAge) ripples.splice(i, 1);
       }
 
-      for (const cell of grid.children) {
-        let rippleValue = 0;
-        const rect = cell.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
+      for (const targetGrid of grids) {
+        for (const cell of targetGrid.children) {
+          let rippleValue = 0;
+          const rect = cell.getBoundingClientRect();
+          const cx = rect.left + rect.width / 2;
+          const cy = rect.top + rect.height / 2;
 
-        for (const ripple of ripples) {
-          const age = now - ripple.startTime;
-          const radius = age * waveSpeed;
-          const dx = cx - ripple.x;
-          const dy = cy - ripple.y;
-          const distance = Math.sqrt(dx * dx + dy * dy);
-          const wave = Math.exp(-Math.pow((distance - radius) / waveWidth, 2));
-          const fade = Math.max(0, 1 - age / maxAge);
-          rippleValue += wave * fade * 0.85 * rippleSize;
+          for (const ripple of ripples) {
+            const age = now - ripple.startTime;
+            const radius = age * waveSpeed;
+            const dx = cx - ripple.x;
+            const dy = cy - ripple.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const wave = Math.exp(-Math.pow((distance - radius) / waveWidth, 2));
+            const fade = Math.max(0, 1 - age / maxAge);
+            rippleValue += wave * fade * 0.85 * rippleSize;
+          }
+
+          cell.style.setProperty("--ripple", rippleValue.toFixed(3));
         }
-
-        cell.style.setProperty("--ripple", rippleValue.toFixed(3));
       }
     }
 
@@ -371,7 +383,7 @@
       updatePulse(now);
       y += scrollSpeed * (delta / 30);
       wrapPosition();
-      grid.style.transform = `translateY(${y}px)`;
+      positionGrids();
       updateRipples(now);
       requestAnimationFrame(animate);
     }
@@ -379,7 +391,6 @@
     function enterFullscreen() {
       if (document.fullscreenElement) return;
       const element = document.documentElement;
-
       if (element.requestFullscreen) {
         element.requestFullscreen().catch(() => {});
       } else if (element.webkitRequestFullscreen) {
@@ -426,18 +437,22 @@
     }
 
     let lastWindowWidth = window.innerWidth;
-    let lastWindowHeight = window.innerHeight;
 
     window.addEventListener("resize", () => {
       const widthDiff = Math.abs(window.innerWidth - lastWindowWidth);
-      const heightDiff = Math.abs(window.innerHeight - lastWindowHeight);
-
-      if (widthDiff > 120 || heightDiff > 160) {
+      if (widthDiff > 80) {
         lastWindowWidth = window.innerWidth;
-        lastWindowHeight = window.innerHeight;
         y = 0;
         buildGrid();
       }
+    });
+
+    window.addEventListener("orientationchange", () => {
+      setTimeout(() => {
+        lastWindowWidth = window.innerWidth;
+        y = 0;
+        buildGrid();
+      }, 300);
     });
 
     window.addEventListener("pointerdown", pointerDown);
