@@ -122,8 +122,12 @@
       return min + Math.random() * (max - min);
     }
 
-    function colorForIndex(index) {
-      const pseudoRandom = Math.abs(Math.sin(index * 12.9898) * 43758.5453);
+    function colorForCell(col, row) {
+      // Keep the color pattern stable when the vertical scroll loops.
+      // Rows repeat every extraRows so the loop boundary does not flash to a new palette.
+      const repeatRow = row % extraRows;
+      const seed = col * 37.17 + repeatRow * 91.73;
+      const pseudoRandom = Math.abs(Math.sin(seed * 12.9898) * 43758.5453);
       const colorIndex = Math.floor(pseudoRandom) % colors.length;
       return colors[colorIndex];
     }
@@ -192,8 +196,10 @@
 
       for (let i = 0; i < total; i++) {
         const cell = document.createElement("div");
+        const col = i % columns;
+        const row = Math.floor(i / columns);
         cell.className = "cell";
-        cell.style.background = colorForIndex(i);
+        cell.style.background = colorForCell(col, row);
         grid.appendChild(cell);
       }
     }
