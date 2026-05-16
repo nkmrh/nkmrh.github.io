@@ -419,10 +419,21 @@
       isPointerDown = false;
     }
 
+    let lastWindowWidth = window.innerWidth;
+    let lastWindowHeight = window.innerHeight;
+
     window.addEventListener("resize", () => {
-      y = 0;
-      buildGrid();
+      const widthDiff = Math.abs(window.innerWidth - lastWindowWidth);
+      const heightDiff = Math.abs(window.innerHeight - lastWindowHeight);
+
+      if (widthDiff > 120 || heightDiff > 160) {
+        lastWindowWidth = window.innerWidth;
+        lastWindowHeight = window.innerHeight;
+        y = 0;
+        buildGrid();
+      }
     });
+
     window.addEventListener("pointerdown", pointerDown);
     window.addEventListener("pointermove", pointerMove);
     window.addEventListener("pointerup", pointerUp);
