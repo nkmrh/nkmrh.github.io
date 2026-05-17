@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Cubiq Dance</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      user-select: none;
+      touch-action: none;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100vw;
+      height: 100dvh;
+      min-height: 100vh;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    let width = 0;
+    let height = 0;
+    let dpr = 1;
+
+    let pointerActive = false;
+    let pointerX = 0;
+    let pointerY = 0;
+    let lastDragX = 0;
+    let lastDragY = 0;
+
+    let manualRotationX = 0;
+    let manualRotationY = 0;
+    let rotationVelocityX = 0;
+    let rotationVelocityY = 0;
+    let rotationDamping = 0.995;
+    let beatBoost = 0;
+
+    const cells = [];
+    const cubelets = [];
+    const emptyCells = [];
+    const movingCubelets = [];
+
+    let nextMoveTime = 0;
+    let cubeSpacing = 0.62;
+
+    const colorPalette = [
+      "#8b5cf6",
+      "#06b6d4",
+      "#22c55e",
+      "#f97316",
+      "#ec4899",
+      "#eab308",
+      "#3b82f6",
+      "#ef4444"
+    ];
+
+    const cubeColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
+
+    function randomRange(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function easeOutCubic(t) {
+      return 1 - Math.pow(1 - t, 3);
+    }
+
+    function resize() {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      width = Math.max(
+        window.innerWidth,
+        document.documentElement.clientWidth,
+        window.visualViewport ? window.visualViewport.width : 0
+      );
+      height = Math.max(
+        window.innerHeight,
+        document.documentElement.clientHeight,
+        window.visualViewport ? window.visualViewport.height : 0
+      );
+
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      pointerX = width * 0.5;
+      pointerY = height * 0.5;
+
+      if (cubelets.length === 0) buildPuzzle();
+    }
+
+    function buildPuzzle() {
+      cells.length = 0;
+      cubelets.length = 0;
+      emptyCells.length = 0;
+      movingCubelets.length = 0;
+
+      const gridX = 3;
+      const gridY = 3;
+      const gridZ = 3;
+      const spacing = cubeSpacing;
+      const zSpacing = cubeSpacing * 1.05;
+
+      for (let z = 0; z < gridZ; z++) {
+        for (let y = 0; y < gridY; y++) {
+          for (let x = 0; x < gridX; x++) {
+            cells.push({
+              id: `${x},${y},${z}`,
+              gx: x,
+              gy: y,
+              gz: z,
+              x: (x - 1) * spacing,
+              y: (y - 1) * spacing,
+              z: (z - 1) * zSpacing
+            });
+          }
+        }
+      }
+
+      const emptyIds = new Set(["1,1,1", "0,1,1", "2,1,1"]);
+
+      cells.forEach((cell, index) => {
+        if (emptyIds.has(cell.id)) {
+          emptyCells.push(cell);
+          return;
+        }
+
+        cubelets.push({
+          cell,
+          fromCell: cell,
+          targetCell: cell,
+          x: cell.x,
+          y: cell.y,
+          z: cell.z,
+          phase: randomRange(0, Math.PI * 2),
+          colorOffset: index,
+          color: cubeColor,
+          moving: false,
+          moveStartTime: 0,
+          moveDuration: 900
+        });
+      });
+    }
+
+    function isAdjacent(a, b) {
+      const dx = Math.abs(a.gx - b.gx);
+      const dy = Math.abs(a.gy - b.gy);
+      const dz = Math.abs(a.gz - b.gz);
+      return dx + dy + dz === 1;
+    }
+
+    function startNextMoves(now) {
+      if (movingCubelets.length > 0) return;
+
+      const usedCubelets = new Set();
+      const nextEmptyCells = [];
+      const shuffledEmptyCells = [...emptyCells].sort(() => Math.random() - 0.5);
+
+      for (const emptyCell of shuffledEmptyCells) {
+        const candidates = cubelets.filter((cubelet) => {
+          if (cubelet.moving || usedCubelets.has(cubelet)) return false;
+          return isAdjacent(cubelet.targetCell, emptyCell);
+        });
+
+        if (candidates.length === 0) {
+          nextEmptyCells.push(emptyCell);
+          continue;
+        }
+
+        const cubelet = candidates[Math.floor(Math.random() * candidates.length)];
+        const oldCell = cubelet.targetCell;
+
+        cubelet.fromCell = oldCell;
+        cubelet.targetCell = emptyCell;
+        cubelet.moving = true;
+        cubelet.moveStartTime = now;
+        cubelet.moveDuration = randomRange(620, 920);
+
+        usedCubelets.add(cubelet);
+        movingCubelets.push(cubelet);
+        nextEmptyCells.push(oldCell);
+
+        if (movingCubelets.length >= 3) break;
+      }
+
+      for (const emptyCell of shuffledEmptyCells) {
+        if (nextEmptyCells.length >= 3) break;
+        if (!nextEmptyCells.includes(emptyCell)) nextEmptyCells.push(emptyCell);
+      }
+
+      emptyCells.length = 0;
+      nextEmptyCells.slice(0, 3).forEach((cell) => emptyCells.push(cell));
+    }
+
+    function enterFullscreen() {
+      if (document.fullscreenElement) return;
+      const element = document.documentElement;
+      if (element.requestFullscreen) {
+        element.requestFullscreen().catch(() => {});
+      } else if (element.webkitRequestFullscreen) {
+        element.webkitRequestFullscreen();
+      }
+    }
+
+    function rotateX(p, a) {
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      return { x: p.x, y: p.y * c - p.z * s, z: p.y * s + p.z * c };
+    }
+
+    function rotateY(p, a) {
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      return { x: p.x * c + p.z * s, y: p.y, z: -p.x * s + p.z * c };
+    }
+
+    function rotateZ(p, a) {
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      return { x: p.x * c - p.y * s, y: p.x * s + p.y * c, z: p.z };
+    }
+
+    function transformPoint(p, rotation) {
+      let q = rotateX(p, rotation.x);
+      q = rotateY(q, rotation.y);
+      q = rotateZ(q, rotation.z);
+      return q;
+    }
+
+    function project(p, scale) {
+      const camera = 7.8;
+      const perspective = camera / (camera + p.z);
+      return {
+        x: width * 0.5 + p.x * scale * perspective,
+        y: height * 0.5 + p.y * scale * perspective,
+        z: p.z,
+        perspective
+      };
+    }
+
+    function shade(hex, amount) {
+      const n = parseInt(hex.slice(1), 16);
+      let r = (n >> 16) & 255;
+      let g = (n >> 8) & 255;
+      let b = n & 255;
+
+      r = Math.max(0, Math.min(255, r + amount));
+      g = Math.max(0, Math.min(255, g + amount));
+      b = Math.max(0, Math.min(255, b + amount));
+
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+
+    function polygonCenter(points) {
+      let x = 0;
+      let y = 0;
+      let z = 0;
+
+      points.forEach((p) => {
+        x += p.x;
+        y += p.y;
+        z += p.z;
+      });
+
+      return { x: x / points.length, y: y / points.length, z: z / points.length };
+    }
+
+    function normalOfFace(points) {
+      const a = points[0];
+      const b = points[1];
+      const c = points[2];
+
+      const ux = b.x - a.x;
+      const uy = b.y - a.y;
+      const uz = b.z - a.z;
+
+      const vx = c.x - a.x;
+      const vy = c.y - a.y;
+      const vz = c.z - a.z;
+
+      return {
+        x: uy * vz - uz * vy,
+        y: uz * vx - ux * vz,
+        z: ux * vy - uy * vx
+      };
+    }
+
+    function drawFace(face, scale) {
+      const normal = normalOfFace(face.points);
+      if (normal.z <= -0.02) return;
+
+      const projected = face.points.map((p) => project(p, scale));
+
+      const len = Math.sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z) || 1;
+      const nx = normal.x / len;
+      const ny = normal.y / len;
+      const nz = normal.z / len;
+
+      const light = { x: -0.45, y: -0.75, z: 0.9 };
+      const lightLen = Math.sqrt(light.x * light.x + light.y * light.y + light.z * light.z);
+      const lx = light.x / lightLen;
+      const ly = light.y / lightLen;
+      const lz = light.z / lightLen;
+
+      const diffuse = Math.max(0, nx * lx + ny * ly + nz * lz);
+      const ambient = 0.28;
+      const brightness = ambient + diffuse * 0.82;
+      const shadeAmount = Math.floor((brightness - 0.62) * 150);
+
+      ctx.beginPath();
+      projected.forEach((p, i) => {
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
+      ctx.closePath();
+
+      ctx.fillStyle = shade(face.color, shadeAmount);
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(0,0,0,0.78)";
+      ctx.lineWidth = Math.max(1.2, scale * 0.014);
+      ctx.stroke();
+
+      ctx.strokeStyle = `rgba(255,255,255,${0.06 + diffuse * 0.08})`;
+      ctx.lineWidth = Math.max(0.5, scale * 0.004);
+      ctx.stroke();
+    }
+
+    function cubeletFaces(cubelet, rotation, cubeSize, scale, now) {
+      let progress = 1;
+
+      if (cubelet.moving) {
+        const raw = Math.min(1, (now - cubelet.moveStartTime) / cubelet.moveDuration);
+        progress = easeOutCubic(raw);
+
+        if (progress >= 1) {
+          cubelet.moving = false;
+          const index = movingCubelets.indexOf(cubelet);
+          if (index >= 0) movingCubelets.splice(index, 1);
+          nextMoveTime = now + randomRange(120, 260);
+        }
+      }
+
+      const from = cubelet.fromCell;
+      const target = cubelet.targetCell;
+
+      cubelet.x = lerp(from.x, target.x, progress);
+      cubelet.y = lerp(from.y, target.y, progress);
+      cubelet.z = lerp(from.z, target.z, progress);
+
+      const center = { x: cubelet.x, y: cubelet.y, z: cubelet.z };
+
+      const s = cubeSize * 0.5;
+      const corners = [
+        { x: -s, y: -s, z: -s },
+        { x:  s, y: -s, z: -s },
+        { x:  s, y:  s, z: -s },
+        { x: -s, y:  s, z: -s },
+        { x: -s, y: -s, z:  s },
+        { x:  s, y: -s, z:  s },
+        { x:  s, y:  s, z:  s },
+        { x: -s, y:  s, z:  s }
+      ].map((p) => {
+        const q = transformPoint(p, rotation);
+        const c = transformPoint(center, rotation);
+        return { x: q.x + c.x, y: q.y + c.y, z: q.z + c.z };
+      });
+
+      const color = cubelet.color;
+
+      const faces = [
+        { points: [corners[5], corners[6], corners[2], corners[1]], color },
+        { points: [corners[4], corners[0], corners[3], corners[7]], color },
+        { points: [corners[4], corners[5], corners[1], corners[0]], color },
+        { points: [corners[7], corners[3], corners[2], corners[6]], color },
+        { points: [corners[4], corners[7], corners[6], corners[5]], color },
+        { points: [corners[0], corners[1], corners[2], corners[3]], color }
+      ];
+
+      return faces.map((face) => ({ ...face, center: polygonCenter(face.points) }));
+    }
+
+    function drawBackground() {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, width, height);
+    }
+
+    function drawCube(now) {
+      const minSide = Math.min(width, height);
+      const scale = minSide * 0.17;
+      const cubeSize = 0.42;
+
+      manualRotationX += rotationVelocityX;
+      manualRotationY += rotationVelocityY;
+      rotationVelocityX *= rotationDamping;
+      rotationVelocityY *= rotationDamping;
+
+      if (Math.abs(rotationVelocityX) < 0.00001) rotationVelocityX = 0;
+      if (Math.abs(rotationVelocityY) < 0.00001) rotationVelocityY = 0;
+
+      const rotation = {
+        x: -0.58 + Math.sin(now * 0.00055) * 0.08 + manualRotationX,
+        y: 0.72 + Math.sin(now * 0.0005) * 0.10 + manualRotationY,
+        z: Math.sin(now * 0.0007) * 0.08 + beatBoost * 0.14
+      };
+
+      beatBoost *= 0.92;
+
+      const allFaces = [];
+
+      cubelets.forEach((cubelet) => {
+        allFaces.push(...cubeletFaces(cubelet, rotation, cubeSize, scale, now));
+      });
+
+      allFaces.sort((a, b) => b.center.z - a.center.z);
+
+      ctx.save();
+      allFaces.forEach((face) => drawFace(face, scale));
+      ctx.restore();
+    }
+
+    function animate(now) {
+      if (movingCubelets.length === 0 && now > nextMoveTime) startNextMoves(now);
+
+      drawBackground();
+      drawCube(now);
+      requestAnimationFrame(animate);
+    }
+
+    function pointerDownHandler(event) {
+      enterFullscreen();
+
+      pointerActive = true;
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+      lastDragX = event.clientX;
+      lastDragY = event.clientY;
+
+      rotationVelocityX = 0;
+      rotationVelocityY = 0;
+
+      beatBoost = 0.6;
+
+      if (movingCubelets.length === 0) startNextMoves(performance.now());
+
+      event.preventDefault();
+    }
+
+    function pointerMoveHandler(event) {
+      if (!pointerActive) return;
+
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+
+      const dx = event.clientX - lastDragX;
+      const dy = event.clientY - lastDragY;
+
+      manualRotationY -= dx * 0.01;
+      manualRotationX -= dy * 0.01;
+
+      rotationVelocityY = -dx * 0.0012;
+      rotationVelocityX = -dy * 0.0012;
+
+      lastDragX = event.clientX;
+      lastDragY = event.clientY;
+
+      event.preventDefault();
+    }
+
+    function pointerUpHandler() {
+      pointerActive = false;
+    }
+
+    window.addEventListener("resize", resize);
+    document.addEventListener("fullscreenchange", () => setTimeout(resize, 80));
+    document.addEventListener("webkitfullscreenchange", () => setTimeout(resize, 80));
+    window.addEventListener("pointerdown", pointerDownHandler);
+    window.addEventListener("pointermove", pointerMoveHandler);
+    window.addEventListener("pointerup", pointerUpHandler);
+    window.addEventListener("pointercancel", pointerUpHandler);
+
+    resize();
+    nextMoveTime = performance.now() + 400;
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
