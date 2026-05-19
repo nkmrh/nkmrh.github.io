@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Soft Division</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #050505; user-select: none; touch-action: none; }
+    canvas { position: fixed; inset: 0; display: block; width: 100vw; height: 100dvh; min-height: 100vh; background: #050505; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    "use strict";
+
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    let width = 0, height = 0, dpr = 1;
+    let lastTime = performance.now();
+    let nextId = 1;
+    let audioContext = null;
+
+    const blobs = [];
+    let activePointerId = null;
+    let draggedBlob = null;
+    let tappedBlob = null;
+    let dragOffsetX = 0, dragOffsetY = 0;
+    let downX = 0, downY = 0;
+    let didDrag = false;
+
+    function assert(condition, message) { if (!condition) throw new Error(message); }
+
+    function runSelfTests() {
+      const a = { x: 0, y: 0, r: 10 };
+      const b = { x: 15, y: 0, r: 10 };
+      assert(distance(a.x, a.y, b.x, b.y) === 15, "distance should work");
+      assert(canFuse(a, b), "overlapping blobs should be able to fuse");
+      assert(combinedRadius(10, 10) > 10, "combined radius should grow");
+      const testBlob = makeBlob(0, 0, 10);
+      assert(testBlob.vx === 0 && testBlob.vy === 0, "new blob should be still");
+      assert(canSplit(testBlob), "small blobs should still be splittable");
+      assert(typeof splitBlob === "function", "splitBlob should exist");
+      assert(typeof fuseCollidingBlobs === "function", "fuseCollidingBlobs should exist");
+      assert(typeof ensureAudio === "function", "ensureAudio should exist");
+    }
+
+    function randomRange(min, max) { return min + Math.random() * (max - min); }
+    function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+    function distance(x1, y1, x2, y2) { return Math.hypot(x1 - x2, y1 - y2); }
+    function combinedRadius(r1, r2) { return Math.sqrt(r1 * r1 + r2 * r2); }
+    function canFuse(a, b) { return distance(a.x, a.y, b.x, b.y) < (a.r + b.r) * 0.88; }
+    function canSplit(blob) { return Boolean(blob) && blob.r >= 10 && blobs.length < 64; }
+
+    function ensureAudio() {
+      if (audioContext) {
+        if (audioContext.state === "suspended") audioContext.resume().catch(function () {});
+        return audioContext;
+      }
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return null;
+      audioContext = new AudioContextClass();
+      if (audioContext.state === "suspended") audioContext.resume().catch(function () {});
+      return audioContext;
+    }
+
+    function playTone(frequency, duration, type, volume) {
+      const ac = ensureAudio();
+      if (!ac) return;
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(frequency, ac.currentTime);
+      gain.gain.setValueAtTime(0.0001, ac.currentTime);
+      gain.gain.exponentialRampToValueAtTime(volume, ac.currentTime + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(ac.destination);
+      osc.start();
+      osc.stop(ac.currentTime + duration + 0.02);
+    }
+
+    function playSplitSound() {
+      playTone(520, 0.09, "triangle", 0.07);
+      window.setTimeout(function () { playTone(760, 0.075, "sine", 0.045); }, 24);
+    }
+
+    function playFuseSound() {
+      playTone(180, 0.14, "sine", 0.08);
+      window.setTimeout(function () { playTone(120, 0.16, "triangle", 0.05); }, 42);
+    }
+
+    function resize() {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      width = Math.max(window.innerWidth, document.documentElement.clientWidth, window.visualViewport ? window.visualViewport.width : 0);
+      height = Math.max(window.innerHeight, document.documentElement.clientHeight, window.visualViewport ? window.visualViewport.height : 0);
+
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      if (blobs.length === 0) resetScene();
+      blobs.forEach(keepInside);
+    }
+
+    function enterFullscreen() {
+      if (document.fullscreenElement) return;
+      const element = document.documentElement;
+      if (element.requestFullscreen) element.requestFullscreen().catch(function () {});
+      else if (element.webkitRequestFullscreen) element.webkitRequestFullscreen();
+    }
+
+    function resetScene() {
+      blobs.length = 0;
+      const r = Math.min(width, height) * 0.13;
+      blobs.push(makeBlob(width * 0.5, height * 0.5, r));
+    }
+
+    function makeBlob(x, y, r) {
+      return {
+        id: nextId++, x: x, y: y, vx: 0, vy: 0, r: r, targetR: r,
+        phase: randomRange(0, Math.PI * 2),
+        shapeA: randomRange(0.02, 0.055),
+        shapeB: randomRange(0.012, 0.04),
+        shapeC: randomRange(0.008, 0.03),
+        shapeP1: randomRange(0, Math.PI * 2),
+        shapeP2: randomRange(0, Math.PI * 2),
+        shapeP3: randomRange(0, Math.PI * 2),
+        squishX: 1, squishY: 1, wobble: 0,
+        birth: performance.now(), grabbed: false
+      };
+    }
+
+    function keepInside(blob) {
+      const margin = blob.r * 0.72;
+      if (blob.x < margin) { blob.x = margin; blob.vx = Math.abs(blob.vx) * 0.58; blob.squishX = 0.86; blob.squishY = 1.14; }
+      if (blob.x > width - margin) { blob.x = width - margin; blob.vx = -Math.abs(blob.vx) * 0.58; blob.squishX = 0.86; blob.squishY = 1.14; }
+      if (blob.y < margin) { blob.y = margin; blob.vy = Math.abs(blob.vy) * 0.58; blob.squishX = 1.14; blob.squishY = 0.86; }
+      if (blob.y > height - margin) { blob.y = height - margin; blob.vy = -Math.abs(blob.vy) * 0.58; blob.squishX = 1.14; blob.squishY = 0.86; }
+    }
+
+    function blobAt(x, y) {
+      for (let i = blobs.length - 1; i >= 0; i--) {
+        const blob = blobs[i];
+        if (distance(x, y, blob.x, blob.y) <= blob.r * 1.12) return blob;
+      }
+      return null;
+    }
+
+    function splitBlob(blob) {
+      if (!canSplit(blob)) return;
+      const index = blobs.indexOf(blob);
+      if (index >= 0) blobs.splice(index, 1);
+
+      const startAngle = Math.random() * Math.PI * 2;
+      const count = blob.r > Math.min(width, height) * 0.12 ? 3 : 2;
+      const childR = Math.max(8, (blob.r / Math.sqrt(count)) * 0.92);
+
+      for (let i = 0; i < count; i++) {
+        const angle = startAngle + (Math.PI * 2 * i) / count;
+        const child = makeBlob(blob.x + Math.cos(angle) * childR * 0.88, blob.y + Math.sin(angle) * childR * 0.88, childR);
+        child.vx = Math.cos(angle) * randomRange(0.42, 0.82);
+        child.vy = Math.sin(angle) * randomRange(0.42, 0.82);
+        child.squishX = 1.42;
+        child.squishY = 0.62;
+        child.wobble = 1.25;
+        blobs.push(child);
+      }
+      playSplitSound();
+    }
+
+    function fuseBlobs(a, b) {
+      if (!a || !b || a === b) return null;
+      const wasDragging = a === draggedBlob || b === draggedBlob || a.grabbed || b.grabbed;
+      const totalAreaValue = a.r * a.r + b.r * b.r;
+      const r = Math.min(Math.min(width, height) * 0.26, Math.sqrt(totalAreaValue) * 1.03);
+      const x = (a.x * a.r * a.r + b.x * b.r * b.r) / totalAreaValue;
+      const y = (a.y * a.r * a.r + b.y * b.r * b.r) / totalAreaValue;
+      const fused = makeBlob(x, y, r);
+      fused.vx = (a.vx + b.vx) * 0.28;
+      fused.vy = (a.vy + b.vy) * 0.28;
+      fused.squishX = 1.42;
+      fused.squishY = 0.66;
+      fused.wobble = 1.0;
+      fused.grabbed = wasDragging;
+
+      const ai = blobs.indexOf(a);
+      if (ai >= 0) blobs.splice(ai, 1);
+      const bi = blobs.indexOf(b);
+      if (bi >= 0) blobs.splice(bi, 1);
+      blobs.push(fused);
+
+      if (wasDragging) { draggedBlob = fused; dragOffsetX = 0; dragOffsetY = 0; }
+      playFuseSound();
+      return fused;
+    }
+
+    function update(delta) {
+      const dt = Math.min(32, delta);
+      blobs.forEach(function (blob) {
+        if (!blob.grabbed) {
+          blob.x += blob.vx * dt;
+          blob.y += blob.vy * dt;
+          blob.vx *= 0.986;
+          blob.vy *= 0.986;
+          if (Math.abs(blob.vx) < 0.002) blob.vx = 0;
+          if (Math.abs(blob.vy) < 0.002) blob.vy = 0;
+        }
+        blob.r += (blob.targetR - blob.r) * 0.12;
+        blob.squishX += (1 - blob.squishX) * 0.1;
+        blob.squishY += (1 - blob.squishY) * 0.1;
+        blob.wobble *= 0.94;
+        keepInside(blob);
+      });
+      fuseCollidingBlobs();
+    }
+
+    function fuseCollidingBlobs() {
+      for (let i = 0; i < blobs.length; i++) {
+        for (let j = i + 1; j < blobs.length; j++) {
+          const a = blobs[i];
+          const b = blobs[j];
+          if (canFuse(a, b)) { fuseBlobs(a, b); return; }
+        }
+      }
+    }
+
+    function drawBackground() {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#050505";
+      ctx.fillRect(0, 0, width, height);
+    }
+
+    function drawBlob(blob, now) {
+      const age = Math.min(1, (now - blob.birth) / 220);
+      const r = blob.r * (0.85 + age * 0.15);
+      const wobbleAmount = 0.055 * blob.wobble;
+      const pointCount = 48;
+      const verticalJelly = 1 + Math.sin(now * 0.018 + blob.phase) * blob.wobble * 0.18;
+
+      ctx.save();
+      ctx.translate(blob.x, blob.y);
+      ctx.scale(blob.squishX, blob.squishY * verticalJelly);
+
+      ctx.beginPath();
+      for (let i = 0; i <= pointCount; i++) {
+        const t = i / pointCount;
+        const angle = t * Math.PI * 2;
+        const randomShape =
+          Math.sin(angle * 2 + blob.shapeP1) * blob.shapeA +
+          Math.sin(angle * 3 + blob.shapeP2) * blob.shapeB +
+          Math.sin(angle * 5 + blob.shapeP3) * blob.shapeC;
+        const motionShape =
+          Math.sin(angle * 3 + now * 0.012 + blob.phase) * wobbleAmount +
+          Math.sin(angle * 5 - now * 0.008 + blob.phase) * wobbleAmount * 0.55;
+        const shapeMix = clamp(blob.wobble * 1.4, 0, 1);
+        const radius = r * (1 + randomShape * shapeMix + motionShape);
+        const x = Math.cos(angle) * radius;
+        const y = Math.sin(angle) * radius;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawConnections() {
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      for (let i = 0; i < blobs.length; i++) {
+        for (let j = i + 1; j < blobs.length; j++) {
+          const a = blobs[i];
+          const b = blobs[j];
+          const d = distance(a.x, a.y, b.x, b.y);
+          const threshold = (a.r + b.r) * 1.08;
+          if (d < threshold) {
+            const alpha = (1 - d / threshold) * 0.28;
+            ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+            ctx.lineWidth = Math.max(1, Math.min(a.r, b.r) * 0.11 * (1 - d / threshold));
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.stroke();
+          }
+        }
+      }
+      ctx.restore();
+    }
+
+    function draw(now) {
+      drawBackground();
+      drawConnections();
+      blobs.forEach(function (blob) { drawBlob(blob, now); });
+    }
+
+    function animate(now) {
+      const delta = now - lastTime;
+      lastTime = now;
+      update(delta);
+      draw(now);
+      requestAnimationFrame(animate);
+    }
+
+    function pointerDownHandler(event) {
+      enterFullscreen();
+      ensureAudio();
+      try { canvas.setPointerCapture(event.pointerId); } catch (_) {}
+
+      activePointerId = event.pointerId;
+      downX = event.clientX;
+      downY = event.clientY;
+      didDrag = false;
+      tappedBlob = null;
+
+      const blob = blobAt(event.clientX, event.clientY);
+      if (blob) {
+        tappedBlob = blob;
+        draggedBlob = blob;
+        draggedBlob.grabbed = true;
+        draggedBlob.squishX = 1.38;
+        draggedBlob.squishY = 0.58;
+        draggedBlob.wobble = 1;
+        dragOffsetX = event.clientX - blob.x;
+        dragOffsetY = event.clientY - blob.y;
+      }
+      event.preventDefault();
+    }
+
+    function pointerMoveHandler(event) {
+      if (event.pointerId !== activePointerId) return;
+      const dx = event.clientX - downX;
+      const dy = event.clientY - downY;
+      if (Math.hypot(dx, dy) > 6) didDrag = true;
+
+      if (draggedBlob) {
+        const targetX = event.clientX - dragOffsetX;
+        const targetY = event.clientY - dragOffsetY;
+        const prevX = draggedBlob.x;
+        const prevY = draggedBlob.y;
+        draggedBlob.x += (targetX - draggedBlob.x) * 0.38;
+        draggedBlob.y += (targetY - draggedBlob.y) * 0.38;
+        draggedBlob.vx = (draggedBlob.x - prevX) / 16;
+        draggedBlob.vy = (draggedBlob.y - prevY) / 16;
+        const speed = Math.hypot(draggedBlob.vx, draggedBlob.vy);
+        draggedBlob.squishX = 1 + clamp(speed * 0.22, 0, 0.36);
+        draggedBlob.squishY = 1 - clamp(speed * 0.2, 0, 0.34);
+        draggedBlob.wobble = Math.min(1, draggedBlob.wobble + speed * 0.05);
+      }
+      event.preventDefault();
+    }
+
+    function pointerUpHandler(event) {
+      if (event.pointerId !== activePointerId) return;
+
+      if (draggedBlob) {
+        draggedBlob.grabbed = false;
+        let fuseTarget = null;
+        for (let i = 0; i < blobs.length; i++) {
+          const other = blobs[i];
+          if (other !== draggedBlob && canFuse(draggedBlob, other)) { fuseTarget = other; break; }
+        }
+
+        if (fuseTarget) {
+          const fused = fuseBlobs(draggedBlob, fuseTarget);
+          if (fused) fused.grabbed = false;
+        } else if (!didDrag) {
+          draggedBlob.squishX = 1.48;
+          draggedBlob.squishY = 0.52;
+          draggedBlob.wobble = 1.2;
+          splitBlob(draggedBlob);
+        }
+      } else if (!didDrag) {
+        const nearest = tappedBlob || blobAt(event.clientX, event.clientY);
+        if (nearest) splitBlob(nearest);
+      }
+
+      draggedBlob = null;
+      tappedBlob = null;
+      activePointerId = null;
+      try { canvas.releasePointerCapture(event.pointerId); } catch (_) {}
+      event.preventDefault();
+    }
+
+    function pointerCancelHandler() {
+      if (draggedBlob) draggedBlob.grabbed = false;
+      draggedBlob = null;
+      tappedBlob = null;
+      activePointerId = null;
+    }
+
+    window.addEventListener("resize", resize);
+    document.addEventListener("fullscreenchange", function () { window.setTimeout(resize, 80); });
+    document.addEventListener("webkitfullscreenchange", function () { window.setTimeout(resize, 80); });
+    window.addEventListener("pointerdown", pointerDownHandler);
+    window.addEventListener("pointermove", pointerMoveHandler);
+    window.addEventListener("pointerup", pointerUpHandler);
+    window.addEventListener("pointercancel", pointerCancelHandler);
+
+    runSelfTests();
+    resize();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
