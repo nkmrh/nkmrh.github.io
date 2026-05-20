@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Spring Colony</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #fff;
+      user-select: none;
+      touch-action: none;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100vw;
+      height: 100dvh;
+      min-height: 100vh;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    "use strict";
+
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    let width = 0;
+    let height = 0;
+    let dpr = 1;
+    let lastTime = performance.now();
+    let nextId = 1;
+    let desiredCount = 1000;
+    let audioContext = null;
+
+    const blobs = [];
+    let activePointerId = null;
+    let draggedBlob = null;
+    let tappedBlob = null;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+    let downX = 0;
+    let downY = 0;
+    let didDrag = false;
+
+    function randomRange(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function distance(x1, y1, x2, y2) {
+      return Math.hypot(x1 - x2, y1 - y2);
+    }
+
+    function canSplit(blob) {
+      return Boolean(blob) && blob.r >= 10 && blobs.length < 2000;
+    }
+
+    function makeRandomColor() {
+      const colors = [
+        "#ff6f91", "#ff9671", "#ffc75f", "#f9f871",
+        "#b8f35a", "#6ee7b7", "#4dd0e1", "#57a6ff",
+        "#8b8cff", "#c084fc", "#f0abfc", "#ffb3c7"
+      ];
+      return colors[Math.floor(Math.random() * colors.length)];
+    }
+
+    function ensureAudio() {
+      if (audioContext) {
+        if (audioContext.state === "suspended") audioContext.resume().catch(function () {});
+        return audioContext;
+      }
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return null;
+      audioContext = new AudioContextClass();
+      if (audioContext.state === "suspended") audioContext.resume().catch(function () {});
+      return audioContext;
+    }
+
+    function playTone(frequency, duration, type, volume) {
+      const ac = ensureAudio();
+      if (!ac) return;
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(frequency, ac.currentTime);
+      gain.gain.setValueAtTime(0.0001, ac.currentTime);
+      gain.gain.exponentialRampToValueAtTime(volume, ac.currentTime + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(ac.destination);
+      osc.start();
+      osc.stop(ac.currentTime + duration + 0.02);
+    }
+
+    function playSplitSound() {
+      playTone(520, 0.09, "triangle", 0.07);
+      window.setTimeout(function () {
+        playTone(760, 0.075, "sine", 0.045);
+      }, 24);
+    }
+
+    function resize() {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      width = Math.max(window.innerWidth, document.documentElement.clientWidth, window.visualViewport ? window.visualViewport.width : 0);
+      height = Math.max(window.innerHeight, document.documentElement.clientHeight, window.visualViewport ? window.visualViewport.height : 0);
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (blobs.length === 0) resetScene();
+    }
+
+    function enterFullscreen() {
+      if (document.fullscreenElement) return;
+      const element = document.documentElement;
+      if (element.requestFullscreen) element.requestFullscreen().catch(function () {});
+      else if (element.webkitRequestFullscreen) element.webkitRequestFullscreen();
+    }
+
+    function resetScene() {
+      blobs.length = 0;
+      const baseR = Math.min(width, height) * 0.065;
+      for (let i = 0; i < desiredCount; i++) addClimber(baseR);
+    }
+
+    function makeBlob(x, y, r) {
+      return {
+        id: nextId++,
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        r,
+        targetR: r,
+        phase: randomRange(0, Math.PI * 2),
+        jellySpeed: randomRange(0.00012, 0.00045),
+        jellyAmp: randomRange(0.08, 0.24),
+        swaySpeed: randomRange(0.0001, 0.0004),
+        swayAmp: randomRange(0.04, 0.16),
+        climbWaveSpeed: randomRange(0.00008, 0.00025),
+        climbWaveAmp: randomRange(0.008, 0.032),
+        color: makeRandomColor(),
+        shapeA: randomRange(0.02, 0.055),
+        shapeB: randomRange(0.012, 0.04),
+        shapeC: randomRange(0.008, 0.03),
+        shapeP1: randomRange(0, Math.PI * 2),
+        shapeP2: randomRange(0, Math.PI * 2),
+        shapeP3: randomRange(0, Math.PI * 2),
+        bodyScaleX: randomRange(0.72, 1.12),
+        bodyScaleY: randomRange(0.82, 1.28),
+        headBulge: randomRange(-0.08, 0.18),
+        footBias: randomRange(-1.5, 2.2),
+        eyeGapScale: randomRange(0.72, 1.28),
+        eyeYScale: randomRange(0.75, 1.35),
+        eyeSizeScale: randomRange(0.75, 1.35),
+        expression: 0,
+        squishX: 1,
+        squishY: 1,
+        wobble: 0,
+        birth: performance.now(),
+        grabbed: false,
+        climber: false
+      };
+    }
+
+    function addClimber(baseR) {
+      const rBase = baseR || Math.min(width, height) * 0.065;
+      const margin = rBase;
+      const blob = makeBlob(
+        randomRange(-margin * 2.5, width + margin * 2.5),
+        randomRange(-rBase * 3.0, height + rBase * 3.0),
+        rBase * randomRange(0.72, 1.18)
+      );
+      blob.vx = randomRange(-0.025, 0.025);
+      blob.vy = -randomRange(0.012, 0.13);
+      blob.climber = true;
+      blob.wobble = randomRange(0.15, 0.55);
+      blobs.push(blob);
+    }
+
+    function enforceDesiredCount() {
+      while (blobs.length < desiredCount) addClimber();
+    }
+
+    function keepInside(blob) {
+      if (blob.climber) {
+        if (blob.x < -blob.r * 3) blob.x = width + blob.r * 2;
+        if (blob.x > width + blob.r * 3) blob.x = -blob.r * 2;
+        if (blob.y < -blob.r * 2.2) {
+          blob.y = height + randomRange(blob.r, height * 0.65);
+          blob.x = randomRange(-blob.r * 2.5, width + blob.r * 2.5);
+          blob.vx = randomRange(-0.025, 0.025);
+          blob.vy = -randomRange(0.012, 0.13);
+          blob.color = makeRandomColor();
+          blob.wobble = randomRange(0.2, 0.65);
+          blob.jellySpeed = randomRange(0.00012, 0.00045);
+          blob.jellyAmp = randomRange(0.08, 0.24);
+          blob.swaySpeed = randomRange(0.0001, 0.0004);
+          blob.swayAmp = randomRange(0.04, 0.16);
+          blob.climbWaveSpeed = randomRange(0.00008, 0.00025);
+          blob.climbWaveAmp = randomRange(0.008, 0.032);
+          blob.expression = 0;
+        }
+        return;
+      }
+
+      const margin = blob.r * 0.72;
+      blob.x = clamp(blob.x, margin, width - margin);
+      blob.y = clamp(blob.y, margin, height - margin);
+    }
+
+    function getPointerPosition(event) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = width / Math.max(1, rect.width);
+      const scaleY = height / Math.max(1, rect.height);
+      return {
+        x: (event.clientX - rect.left) * scaleX,
+        y: (event.clientY - rect.top) * scaleY
+      };
+    }
+
+    function blobAt(x, y) {
+      for (let i = blobs.length - 1; i >= 0; i--) {
+        const blob = blobs[i];
+        if (distance(x, y, blob.x, blob.y) <= blob.r * 2.05) return blob;
+      }
+      return null;
+    }
+
+    function splitBlob(blob) {
+      if (!canSplit(blob)) return;
+      const index = blobs.indexOf(blob);
+      if (index < 0) return;
+
+      const sourceX = blob.x;
+      const sourceY = blob.y;
+      const sourceR = blob.r;
+      const sourceColor = blob.color;
+      blobs.splice(index, 1);
+
+      const startAngle = Math.random() * Math.PI * 2;
+      const count = sourceR > Math.min(width, height) * 0.12 ? 3 : 2;
+      const childR = Math.max(8, (sourceR / Math.sqrt(count)) * 0.92);
+      const spread = Math.max(childR * 1.9, sourceR * 0.65);
+
+      for (let i = 0; i < count; i++) {
+        const angle = startAngle + (Math.PI * 2 * i) / count;
+        const child = makeBlob(
+          sourceX + Math.cos(angle) * spread,
+          sourceY + Math.sin(angle) * spread,
+          childR
+        );
+        child.color = sourceColor;
+        child.vx = Math.cos(angle) * randomRange(0.18, 0.42);
+        child.vy = -randomRange(0.012, 0.13);
+        child.squishX = 1.42;
+        child.squishY = 0.62;
+        child.wobble = 1.25;
+        child.expression = 1;
+        child.climber = true;
+        blobs.push(child);
+      }
+      playSplitSound();
+    }
+
+    function update(delta, now) {
+      const dt = Math.min(32, delta);
+      blobs.forEach(function (blob) {
+        if (!blob.grabbed) {
+          if (blob.climber) {
+            if (blob.vy >= -0.01) blob.vy = -randomRange(0.012, 0.13);
+            blob.x += (blob.vx + Math.sin(now * blob.climbWaveSpeed + blob.phase) * blob.climbWaveAmp) * dt;
+            blob.y += blob.vy * dt;
+            const jelly = Math.sin(now * blob.jellySpeed + blob.phase);
+            blob.squishX = 1 + jelly * blob.jellyAmp * 0.22;
+            blob.squishY = 1 - jelly * blob.jellyAmp * 0.2;
+            blob.wobble = Math.max(blob.wobble, 0.12 + Math.sin(now * blob.swaySpeed + blob.phase) * blob.swayAmp);
+          } else {
+            blob.x += blob.vx * dt;
+            blob.y += blob.vy * dt;
+            blob.vx *= 0.986;
+            blob.vy *= 0.986;
+          }
+        }
+
+        blob.r += (blob.targetR - blob.r) * 0.12;
+        blob.expression = Math.max(0, blob.expression - dt * 0.0018);
+        blob.squishX += (1 - blob.squishX) * 0.1;
+        blob.squishY += (1 - blob.squishY) * 0.1;
+        blob.wobble *= 0.94;
+        keepInside(blob);
+      });
+      enforceDesiredCount();
+    }
+
+    function drawBackground() {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, width, height);
+    }
+
+    function drawBlob(blob, now) {
+      const age = Math.min(1, (now - blob.birth) / 220);
+      const r = blob.r * (0.85 + age * 0.15);
+      const wobbleAmount = 0.055 * blob.wobble;
+      const pointCount = 48;
+      const verticalJelly = 1 + Math.sin(now * blob.jellySpeed + blob.phase) * blob.wobble * blob.jellyAmp;
+
+      ctx.save();
+      ctx.translate(blob.x, blob.y);
+      ctx.scale(blob.squishX, blob.squishY * verticalJelly);
+
+      ctx.beginPath();
+      for (let i = 0; i <= pointCount; i++) {
+        const t = i / pointCount;
+        const angle = t * Math.PI * 2;
+        const randomShape =
+          Math.sin(angle * 2 + blob.shapeP1) * blob.shapeA +
+          Math.sin(angle * 3 + blob.shapeP2) * blob.shapeB +
+          Math.sin(angle * 5 + blob.shapeP3) * blob.shapeC;
+        const motionShape =
+          Math.sin(angle * 3 + now * 0.012 + blob.phase) * wobbleAmount +
+          Math.sin(angle * 5 - now * 0.008 + blob.phase) * wobbleAmount * 0.55;
+        const shapeMix = clamp(blob.wobble * 1.4, 0, 1);
+        const bottomStretch = Math.max(0, Math.sin(angle)) * (0.18 + blob.headBulge * 0.4);
+        const topRound = Math.max(0, -Math.sin(angle)) * blob.headBulge;
+        const sideTuck = Math.abs(Math.cos(angle)) * Math.max(0, Math.sin(angle)) * 0.12;
+        const radius = r * (1 + randomShape * shapeMix + motionShape + bottomStretch + topRound - sideTuck);
+        const x = Math.cos(angle) * radius * 0.82 * blob.bodyScaleX;
+        const y = Math.sin(angle) * radius * 1.02 * blob.bodyScaleY;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = blob.color;
+      ctx.fill();
+
+      const footCount = Math.max(2, Math.min(9, Math.round(r / 14 + blob.footBias)));
+      ctx.strokeStyle = blob.color;
+      ctx.lineCap = "round";
+      ctx.lineWidth = Math.max(4, r * 0.13);
+      for (let i = 0; i < footCount; i++) {
+        const u = footCount === 1 ? 0.5 : i / (footCount - 1);
+        const baseX = (u - 0.5) * r * 1.05;
+        const baseY = r * 0.68;
+        const sway = Math.sin(now * blob.swaySpeed + blob.phase + i * 0.8) * r * blob.swayAmp * (0.25 + blob.wobble);
+        const endX = baseX + sway;
+        const endY = baseY + r * (0.26 + 0.06 * Math.sin(blob.phase + i));
+        ctx.beginPath();
+        ctx.moveTo(baseX, baseY - r * 0.08);
+        ctx.quadraticCurveTo(baseX + sway * 0.6, baseY + r * 0.12, endX, endY);
+        ctx.stroke();
+      }
+
+      const eyeY = -r * 0.11 * blob.eyeYScale;
+      const eyeGap = r * 0.20 * blob.eyeGapScale;
+      const eyeW = Math.max(2.0, r * 0.055 * blob.eyeSizeScale);
+      const eyeH = Math.max(1.0, r * 0.018 * blob.eyeSizeScale);
+      const expression = blob.expression || 0;
+
+      ctx.strokeStyle = "rgba(5,5,5,0.72)";
+      ctx.fillStyle = "rgba(5,5,5,0.62)";
+      ctx.lineWidth = Math.max(1.2, r * 0.018);
+      ctx.lineCap = "round";
+
+      if (expression > 0.04) {
+        const open = clamp(expression, 0, 1);
+        const openR = Math.max(1.2, r * 0.022 * blob.eyeSizeScale) * (0.7 + open * 0.55);
+        ctx.beginPath();
+        ctx.ellipse(-eyeGap, eyeY + eyeH * 0.25, openR * 1.15, openR, 0, 0, Math.PI * 2);
+        ctx.ellipse(eyeGap, eyeY + eyeH * 0.25, openR * 1.15, openR, 0, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(-eyeGap - eyeW * 0.5, eyeY);
+        ctx.quadraticCurveTo(-eyeGap, eyeY + eyeH, -eyeGap + eyeW * 0.5, eyeY);
+        ctx.moveTo(eyeGap - eyeW * 0.5, eyeY);
+        ctx.quadraticCurveTo(eyeGap, eyeY + eyeH, eyeGap + eyeW * 0.5, eyeY);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+
+    function draw(now) {
+      drawBackground();
+      blobs.forEach(function (blob) { drawBlob(blob, now); });
+    }
+
+    function animate(now) {
+      const delta = now - lastTime;
+      lastTime = now;
+      update(delta, now);
+      draw(now);
+      requestAnimationFrame(animate);
+    }
+
+    function pointerDownHandler(event) {
+      enterFullscreen();
+      ensureAudio();
+      try { canvas.setPointerCapture(event.pointerId); } catch (_) {}
+      const pos = getPointerPosition(event);
+      activePointerId = event.pointerId;
+      downX = pos.x;
+      downY = pos.y;
+      didDrag = false;
+      tappedBlob = null;
+      const blob = blobAt(pos.x, pos.y);
+      if (blob) {
+        tappedBlob = blob;
+        draggedBlob = blob;
+        draggedBlob.grabbed = true;
+        draggedBlob.squishX = 1.38;
+        draggedBlob.squishY = 0.58;
+        draggedBlob.wobble = 1;
+        draggedBlob.expression = 1;
+        dragOffsetX = pos.x - blob.x;
+        dragOffsetY = pos.y - blob.y;
+      }
+      event.preventDefault();
+    }
+
+    function pointerMoveHandler(event) {
+      if (event.pointerId !== activePointerId) return;
+      const pos = getPointerPosition(event);
+      const dx = pos.x - downX;
+      const dy = pos.y - downY;
+      if (Math.hypot(dx, dy) > 6) didDrag = true;
+      if (draggedBlob) {
+        const targetX = pos.x - dragOffsetX;
+        const targetY = pos.y - dragOffsetY;
+        const prevX = draggedBlob.x;
+        const prevY = draggedBlob.y;
+        draggedBlob.x += (targetX - draggedBlob.x) * 0.38;
+        draggedBlob.y += (targetY - draggedBlob.y) * 0.38;
+        draggedBlob.vx = (draggedBlob.x - prevX) / 16;
+        draggedBlob.vy = (draggedBlob.y - prevY) / 16;
+        const speed = Math.hypot(draggedBlob.vx, draggedBlob.vy);
+        draggedBlob.squishX = 1 + clamp(speed * 0.22, 0, 0.36);
+        draggedBlob.squishY = 1 - clamp(speed * 0.2, 0, 0.34);
+        draggedBlob.wobble = Math.min(1, draggedBlob.wobble + speed * 0.05);
+      }
+      event.preventDefault();
+    }
+
+    function pointerUpHandler(event) {
+      if (event.pointerId !== activePointerId) return;
+      const pos = getPointerPosition(event);
+      const wasTap = !didDrag;
+      const splitTarget = tappedBlob || draggedBlob || blobAt(pos.x, pos.y);
+      if (wasTap && splitTarget) {
+        splitTarget.grabbed = false;
+        splitTarget.squishX = 1.48;
+        splitTarget.squishY = 0.52;
+        splitTarget.wobble = 1.2;
+        splitTarget.expression = 1;
+        splitBlob(splitTarget);
+      } else if (draggedBlob) {
+        draggedBlob.grabbed = false;
+      }
+      draggedBlob = null;
+      tappedBlob = null;
+      activePointerId = null;
+      try { canvas.releasePointerCapture(event.pointerId); } catch (_) {}
+      event.preventDefault();
+    }
+
+    function pointerCancelHandler() {
+      if (draggedBlob) draggedBlob.grabbed = false;
+      draggedBlob = null;
+      tappedBlob = null;
+      activePointerId = null;
+    }
+
+    window.addEventListener("resize", resize);
+    document.addEventListener("fullscreenchange", function () { window.setTimeout(resize, 80); });
+    document.addEventListener("webkitfullscreenchange", function () { window.setTimeout(resize, 80); });
+    window.addEventListener("pointerdown", pointerDownHandler);
+    window.addEventListener("pointermove", pointerMoveHandler);
+    window.addEventListener("pointerup", pointerUpHandler);
+    window.addEventListener("pointercancel", pointerCancelHandler);
+
+    resize();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
