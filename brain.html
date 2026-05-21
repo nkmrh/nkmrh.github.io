@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Brain</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#020205}
+canvas{display:block;width:100vw;height:100vh;background:#020205}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const c=document.getElementById("c");
+const g=c.getContext("2d",{alpha:false});
+
+let W=0,H=0,brain=[],last=0;
+let mx=0,my=0,tmx=0,tmy=0;
+
+// 作品性を戻しつつ、クラッシュ要因になりやすい処理は使わない。
+// no drawImage / no CSS filter / no fullscreen / no retina scaling / no trail accumulation
+const CFG={
+  nodes:150,
+  links:220,
+  layers:3,
+  pulse:0.9,
+  depth:0.65,
+  orbit:0.45,
+  color:0.6,
+  regenMs:9000
+};
+
+function R(a,b){return a+Math.random()*(b-a)}
+function I(a,b){return Math.floor(R(a,b+1))}
+
+function resize(){
+  W=innerWidth;
+  H=innerHeight;
+  c.width=W;
+  c.height=H;
+  makeBrain();
+}
+
+function makeBrain(){
+  brain=[];
+  const base=Math.min(W,H)*0.36;
+
+  for(let layer=0;layer<CFG.layers;layer++){
+    const pts=[];
+    const count=Math.floor(CFG.nodes*(1-layer*0.22));
+    const spread=base*(1+layer*0.28);
+
+    for(let i=0;i<count;i++){
+      const a=R(0,Math.PI*2);
+      const r=Math.pow(Math.random(),0.58)*spread;
+      pts.push({
+        x:Math.cos(a)*r+R(-spread*.13,spread*.13),
+        y:Math.sin(a)*r+R(-spread*.13,spread*.13),
+        z:layer,
+        p:R(0,Math.PI*2),
+        s:R(.5,1.4)
+      });
+    }
+
+    const lines=[];
+    for(let i=0;i<CFG.links;i++){
+      const a=pts[I(0,pts.length-1)];
+      let b=pts[I(0,pts.length-1)];
+      let tries=0;
+      while(dist(a,b)>base*.28 && tries++<12)b=pts[I(0,pts.length-1)];
+      lines.push({a,b,alpha:R(.25,.9),accent:Math.random()<.12});
+    }
+
+    brain.push({
+      pts,lines,
+      rot:R(-.6,.6),
+      spin:R(-.00008,.00008),
+      scale:1+layer*.22,
+      alpha:1-layer*.23
+    });
+  }
+}
+
+function dist(a,b){
+  const x=a.x-b.x,y=a.y-b.y;
+  return Math.sqrt(x*x+y*y);
+}
+
+function bg(){
+  const grd=g.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*.7);
+  grd.addColorStop(0,"#080811");
+  grd.addColorStop(.55,"#030306");
+  grd.addColorStop(1,"#010102");
+  g.fillStyle=grd;
+  g.fillRect(0,0,W,H);
+}
+
+function palette(t,accent){
+  const hue=210+Math.sin(t*.00018)*42*CFG.color+(accent?120:0);
+  return `hsla(${hue},95%,${accent?64:74}%,`;
+}
+
+function draw(now){
+  if(now-last<1000/30){requestAnimationFrame(draw);return}
+  last=now;
+
+  bg();
+
+  const cx=W/2+mx+Math.sin(now*.00021)*W*.025*CFG.orbit;
+  const cy=H/2+my+Math.cos(now*.00019)*H*.025*CFG.orbit;
+  const beat=(now*112/60000)%1;
+  const pulse=1+Math.exp(-beat*8)*CFG.pulse*.42;
+  const breathe=1+Math.sin(now*.00034)*.045;
+  const baseRot=now*.000045;
+
+  g.save();
+  g.translate(cx,cy);
+
+  for(const layer of brain){
+    g.save();
+
+    const depthShift=layer.pts[0]?.z||0;
+    const parallax=depthShift*CFG.depth;
+    g.translate(
+      Math.sin(now*.00031+depthShift)*18*parallax,
+      Math.cos(now*.00027+depthShift)*18*parallax
+    );
+    g.rotate(baseRot+layer.rot+now*layer.spin);
+    g.scale(layer.scale*breathe*pulse*(1+depthShift*.035),layer.scale*breathe*pulse*(1+depthShift*.035));
+
+    // glow pass
+    g.globalCompositeOperation="lighter";
+    for(const line of layer.lines){
+      const a=line.a,b=line.b;
+      const wobA=Math.sin(now*.001*a.s+a.p)*2.5;
+      const wobB=Math.cos(now*.001*b.s+b.p)*2.5;
+      g.strokeStyle=palette(now,line.accent)+(0.055*line.alpha*layer.alpha)+")";
+      g.lineWidth=line.accent?7:5;
+      g.beginPath();
+      g.moveTo(a.x+wobA,a.y-wobA);
+      g.lineTo(b.x+wobB,b.y-wobB);
+      g.stroke();
+    }
+
+    // core pass
+    for(const line of layer.lines){
+      const a=line.a,b=line.b;
+      const wobA=Math.sin(now*.001*a.s+a.p)*2.5;
+      const wobB=Math.cos(now*.001*b.s+b.p)*2.5;
+      g.strokeStyle=palette(now,line.accent)+(0.55*line.alpha*layer.alpha)+")";
+      g.lineWidth=line.accent?1.2:.62;
+      g.beginPath();
+      g.moveTo(a.x+wobA,a.y-wobA);
+      g.lineTo(b.x+wobB,b.y-wobB);
+      g.stroke();
+    }
+
+    // firing dots
+    for(let i=0;i<layer.pts.length;i+=4){
+      const p=layer.pts[i];
+      const fire=Math.max(0,Math.sin(now*.002+p.p*3));
+      if(fire<.82)continue;
+      g.fillStyle=`rgba(244,240,232,${(fire-.82)*3.2*layer.alpha})`;
+      g.beginPath();
+      g.arc(p.x,p.y,1.2+fire*2.2,0,Math.PI*2);
+      g.fill();
+    }
+
+    g.restore();
+  }
+
+  g.restore();
+
+  if(now%CFG.regenMs<40)makeBrain();
+  requestAnimationFrame(draw);
+}
+
+function move(e){
+  const r=c.getBoundingClientRect();
+  tmx=((e.clientX-r.left)/r.width-.5)*W*.08;
+  tmy=((e.clientY-r.top)/r.height-.5)*H*.08;
+}
+
+function smooth(){
+  mx+=(tmx-mx)*.04;
+  my+=(tmy-my)*.04;
+  requestAnimationFrame(smooth);
+}
+
+addEventListener("resize",resize);
+addEventListener("pointermove",move);
+addEventListener("pointerdown",e=>{move(e);makeBrain();});
+
+resize();
+smooth();
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>

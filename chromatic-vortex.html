@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chromatic Vortex</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #eee;
+      touch-action: none;
+      user-select: none;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: white;
+      cursor: crosshair;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    let w = 0;
+    let h = 0;
+    let dpr = 1;
+    let t = 0;
+
+    const TAU = Math.PI * 2;
+
+    const pointer = {
+      x: 0.58,
+      y: 0.52,
+      tx: 0.58,
+      ty: 0.52,
+      px: 0.58,
+      py: 0.52,
+      vx: 0,
+      vy: 0,
+      svx: 0,
+      svy: 0,
+      force: 0,
+      down: false,
+      speed: 0,
+      invert: false
+    };
+
+    const morph = {
+      current: 0,
+      target: 0,
+      nextAt: 0,
+      from: null,
+      to: null
+    };
+
+    const patterns = [
+      { blades: 28, twist: 1.25, wave: 12, thickness: 0.50, wobble: 0.025 },
+      { blades: 34, twist: 0.85, wave: 18, thickness: 0.38, wobble: 0.045 },
+      { blades: 22, twist: 1.75, wave: 7,  thickness: 0.62, wobble: 0.018 },
+      { blades: 42, twist: 1.05, wave: 24, thickness: 0.44, wobble: 0.035 }
+    ];
+
+    function mix(a, b, m) {
+      return a + (b - a) * m;
+    }
+
+    function smoothstep(x) {
+      return x * x * (3 - 2 * x);
+    }
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      w = window.innerWidth;
+      h = window.innerHeight;
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+
+    function setPointer(e) {
+      const p = e.touches ? e.touches[0] : e;
+      const nx = p.clientX / w;
+      const ny = p.clientY / h;
+
+      pointer.vx = nx - pointer.px;
+      pointer.vy = ny - pointer.py;
+      pointer.px = nx;
+      pointer.py = ny;
+      pointer.tx = nx;
+      pointer.ty = ny;
+
+      const v = Math.hypot(pointer.vx, pointer.vy);
+      pointer.force = Math.min(1, pointer.force + v * 10);
+    }
+
+    window.addEventListener("pointermove", setPointer);
+    window.addEventListener("pointerdown", e => {
+      pointer.down = true;
+      setPointer(e);
+    });
+    window.addEventListener("pointerup", () => pointer.down = false);
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.();
+      } else {
+        document.exitFullscreen?.();
+      }
+    }
+
+    window.addEventListener("click", () => {
+      toggleFullscreen();
+      pointer.invert = !pointer.invert;
+    });
+
+    function updateMorph() {
+      // 2πで必ず元の形に戻る周期だけを使う。
+      const s1 = (Math.sin(t) + 1) * 0.5;
+      const s2 = (Math.sin(t * 2 + 1.8) + 1) * 0.5;
+      const s3 = (Math.sin(t * 3 + 3.4) + 1) * 0.5;
+      const s4 = (Math.sin(t * 4 + 5.1) + 1) * 0.5;
+
+      return {
+        blades: 28,
+        twist: mix(0.95, 1.85, smoothstep(s1)),
+        wave: mix(7, 24, smoothstep(s2)),
+        thickness: mix(0.36, 0.64, smoothstep(s3)),
+        wobble: mix(0.015, 0.05, smoothstep(s4))
+      };
+    }
+
+    function draw() {
+      pointer.x += (pointer.tx - pointer.x) * 0.06;
+      pointer.y += (pointer.ty - pointer.y) * 0.06;
+      pointer.svx += (pointer.vx - pointer.svx) * 0.12;
+      pointer.svy += (pointer.vy - pointer.svy) * 0.12;
+      pointer.force *= 0.86;
+      pointer.speed += ((pointer.down ? 0.018 : 0.006) - pointer.speed) * 0.05;
+
+      // t は 0〜2π で循環させる。
+      // すべての揺れを sin/cos ベースにして、ループ終端と始端が同じ絵になるようにする。
+      t = (t + pointer.speed) % TAU;
+
+      const hue = (pointer.x * 260 + pointer.y * 120 + Math.sin(t) * 18 + 210) % 360;
+      const fg = pointer.invert
+        ? `hsl(${(hue + 180) % 360} 80% 92%)`
+        : `hsl(${hue} 85% 42%)`;
+      const bg = pointer.invert
+        ? `hsl(${hue} 85% 8%)`
+        : `hsl(${(hue + 180) % 360} 70% 96%)`;
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, w, h);
+
+      const pat = updateMorph();
+
+      const cx = w * pointer.x;
+      const cy = h * pointer.y;
+      const maxR = Math.hypot(w, h) * 0.9;
+      const blades = pat.blades;
+      const pullX = (pointer.x - 0.5) * 2;
+      const pullY = (pointer.y - 0.5) * 2;
+      const dragAngle = Math.atan2(pointer.svy, pointer.svx || 0.0001);
+      const drag = pointer.force;
+      const twist = pat.twist + pointer.y * 0.7 + Math.sin(t) * 0.1;
+      const phase = t + pullX * 0.5 + Math.sin(t) * 0.35;
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(pullX * 0.25 + Math.sin(t) * 0.05);
+      ctx.scale(1 + Math.abs(pullY) * 0.12, 1 - Math.abs(pullX) * 0.08);
+
+      for (let i = 0; i < blades; i++) {
+        const a0 = (i / blades) * TAU + phase;
+        const a1 = ((i + pat.thickness) / blades) * TAU + phase;
+
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+
+        for (let r = 0; r <= maxR; r += 10) {
+          const k = r / maxR;
+          const bend = twist * k * k * Math.PI;
+          const wave = Math.sin(k * pat.wave + t + i + pullX * 4) * (pat.wobble + pointer.y * 0.03) * k;
+          const pinch = Math.sin(k * Math.PI) * pullY * 0.18;
+          const elastic = Math.sin(k * Math.PI) * drag * 0.12;
+          const a = a0 + bend + wave + pinch + Math.sin(dragAngle - a0) * elastic;
+          const stretch = 1 + Math.cos(a - dragAngle) * drag * 0.08 * k;
+          ctx.lineTo(Math.cos(a) * r * stretch, Math.sin(a) * r * stretch);
+        }
+
+        for (let r = maxR; r >= 0; r -= 10) {
+          const k = r / maxR;
+          const bend = twist * k * k * Math.PI;
+          const wave = Math.sin(k * pat.wave + t + i + pullX * 4) * (pat.wobble + pointer.y * 0.03) * k;
+          const pinch = Math.sin(k * Math.PI) * pullY * 0.18;
+          const elastic = Math.sin(k * Math.PI) * drag * 0.12;
+          const a = a1 + bend + wave + pinch + Math.sin(dragAngle - a1) * elastic;
+          const stretch = 1 + Math.cos(a - dragAngle) * drag * 0.08 * k;
+          ctx.lineTo(Math.cos(a) * r * stretch, Math.sin(a) * r * stretch);
+        }
+
+        ctx.closePath();
+        ctx.fillStyle = fg;
+        ctx.fill();
+      }
+
+      ctx.restore();
+
+      requestAnimationFrame(draw);
+    }
+
+    draw();
+  </script>
+</body>
+</html>
