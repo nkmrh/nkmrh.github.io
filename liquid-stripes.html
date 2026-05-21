@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Liquid Stripes</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #eefcff;
+      touch-action: none;
+      user-select: none;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #eefcff;
+      cursor: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    let w = 0;
+    let h = 0;
+    let dpr = 1;
+    let t = 0;
+
+    const pointer = {
+      x: 0.58,
+      y: 0.52,
+      tx: 0.58,
+      ty: 0.52,
+      down: false,
+      speed: 0
+    };
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      w = window.innerWidth;
+      h = window.innerHeight;
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+
+    function setPointer(e) {
+      const p = e.touches ? e.touches[0] : e;
+      pointer.tx = p.clientX / w;
+      pointer.ty = p.clientY / h;
+    }
+
+    window.addEventListener("pointermove", setPointer);
+    window.addEventListener("pointerdown", e => {
+      pointer.down = true;
+      setPointer(e);
+      document.documentElement.requestFullscreen?.();
+    });
+    window.addEventListener("pointerup", () => pointer.down = false);
+
+    function drawStripes(bg, fg) {
+      const step = Math.max(18, Math.min(w, h) * 0.032);
+      const stripeWidth = 1.4;
+      const amp = Math.max(34, Math.min(w, h) * 0.075);
+      const cx = pointer.x;
+      const cy = pointer.y;
+
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = step * stripeWidth;
+
+      for (let x = -80; x < w + 80; x += step) {
+        ctx.beginPath();
+
+        for (let y = -20; y < h + 20; y += 8) {
+          const dx = x / w - cx;
+          const dy = y / h - cy;
+          const d = Math.hypot(dx, dy);
+          const xx = x + Math.sin(y * 0.025 + d * 20 + t * 2) * 40;
+
+          if (y === -20) ctx.moveTo(xx, y);
+          else ctx.lineTo(xx, y);
+        }
+
+        ctx.strokeStyle = Math.floor(x / step) % 2 ? fg : bg;
+        ctx.stroke();
+      }
+    }
+
+    function draw() {
+      pointer.x += (pointer.tx - pointer.x) * 0.06;
+      pointer.y += (pointer.ty - pointer.y) * 0.06;
+      pointer.speed += ((pointer.down ? 0.018 : 0.006) - pointer.speed) * 0.05;
+      t += pointer.speed;
+
+      const hue = (pointer.x * 320 + pointer.y * 80 + t * 12) % 360;
+      const bg = `hsl(${(hue + 185) % 360} 80% 96%)`;
+      const fg = `hsl(${hue} 88% 44%)`;
+
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, w, h);
+
+      drawStripes(bg, fg);
+
+      requestAnimationFrame(draw);
+    }
+
+    draw();
+  </script>
+</body>
+</html>
