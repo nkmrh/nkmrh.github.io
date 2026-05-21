@@ -12,7 +12,6 @@
       overflow: hidden;
       background: #05070f;
       touch-action: manipulation;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
     canvas {
@@ -20,17 +19,6 @@
       width: 100vw;
       height: 100vh;
       background: #05070f;
-    }
-
-    .label {
-      position: fixed;
-      left: 16px;
-      bottom: 14px;
-      color: rgba(255, 255, 255, 0.45);
-      font-size: 12px;
-      letter-spacing: 0.04em;
-      user-select: none;
-      pointer-events: none;
     }
   </style>
 </head>
@@ -44,6 +32,8 @@
     let w = 0;
     let h = 0;
     let dpr = 1;
+
+    const DESIGN_SIZE = 800;
 
     const params = {
       n: 7,
@@ -98,8 +88,11 @@
       }
     }
 
-    function randomize({ instant = false, changeColor = false } = {}) {
+    function randomize(options = {}) {
+      const instant = options.instant || false;
+      const changeColor = options.changeColor || false;
       const pair = candidates[Math.floor(Math.random() * candidates.length)];
+
       params.n = pair[0];
       params.d = pair[1];
       targetN = params.n;
@@ -133,7 +126,7 @@
 
     function getVertices(t) {
       const count = Math.max(3, Math.round(params.vertices));
-      const scale = Math.min(w, h) * params.scale;
+      const scale = DESIGN_SIZE * params.scale;
       const k = currentN / currentD;
       const loops = Math.PI * 2 * Math.max(1, Math.round(currentD));
       const points = [];
@@ -172,9 +165,11 @@
 
       const points = getVertices(t);
       const maxLines = Math.round(params.maxLines);
+      const fit = Math.min(w, h) / DESIGN_SIZE;
 
       ctx.save();
       ctx.translate(w / 2, h / 2);
+      ctx.scale(fit, fit);
       ctx.rotate(t * params.rotationSpeed);
       ctx.globalCompositeOperation = params.blendMode;
       ctx.lineWidth = params.lineWidth;
