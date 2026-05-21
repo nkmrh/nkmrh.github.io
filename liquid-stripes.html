@@ -71,33 +71,57 @@
     });
     window.addEventListener("pointerup", () => pointer.down = false);
 
+    function stripeOffset(y, base, amp, phase, cx) {
+      const n = y / h;
+      const pull = Math.sin(n * Math.PI) * (cx - 0.5) * Math.min(w, h) * 0.22;
+      return base
+        + Math.sin(n * 7.0 + phase) * amp
+        + Math.sin(n * 3.2 - phase * 0.7) * amp * 0.55
+        + Math.sin(n * 12.0 + base * 0.012 + phase * 0.45) * amp * 0.18
+        + pull;
+    }
+
     function drawStripes(bg, fg) {
-      const step = Math.max(18, Math.min(w, h) * 0.032);
-      const stripeWidth = 1.4;
-      const amp = Math.max(34, Math.min(w, h) * 0.075);
+      // Draw each stripe as a filled band polygon instead of a thick stroke.
+      // This keeps the shape stable on narrow smartphone screens.
+      const base = Math.min(w, h);
+      const spacing = Math.max(42, Math.min(76, base * 0.13));
+      const bandWidth = spacing * 0.58;
+      const amp = Math.max(20, Math.min(44, base * 0.07));
+      const phase = t * 2;
       const cx = pointer.x;
-      const cy = pointer.y;
+      const cover = Math.hypot(w, h) + spacing * 4;
 
-      ctx.lineCap = "round";
+      ctx.save();
       ctx.lineJoin = "round";
-      ctx.lineWidth = step * stripeWidth;
 
-      for (let x = -80; x < w + 80; x += step) {
-        ctx.beginPath();
+      for (let baseX = -cover; baseX < w + cover; baseX += spacing) {
+        const left = [];
+        const right = [];
 
-        for (let y = -20; y < h + 20; y += 8) {
-          const dx = x / w - cx;
-          const dy = y / h - cy;
-          const d = Math.hypot(dx, dy);
-          const xx = x + Math.sin(y * 0.025 + d * 20 + t * 2) * 40;
-
-          if (y === -20) ctx.moveTo(xx, y);
-          else ctx.lineTo(xx, y);
+        for (let y = -40; y <= h + 40; y += 10) {
+          const center = stripeOffset(y, baseX, amp, phase, cx);
+          left.push([center - bandWidth * 0.5, y]);
+          right.push([center + bandWidth * 0.5, y]);
         }
 
-        ctx.strokeStyle = Math.floor(x / step) % 2 ? fg : bg;
-        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(left[0][0], left[0][1]);
+
+        for (let i = 1; i < left.length; i++) {
+          ctx.lineTo(left[i][0], left[i][1]);
+        }
+
+        for (let i = right.length - 1; i >= 0; i--) {
+          ctx.lineTo(right[i][0], right[i][1]);
+        }
+
+        ctx.closePath();
+        ctx.fillStyle = fg;
+        ctx.fill();
       }
+
+      ctx.restore();
     }
 
     function draw() {
