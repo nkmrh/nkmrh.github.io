@@ -12,6 +12,7 @@
       overflow: hidden;
       background: #05070f;
       touch-action: manipulation;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
     canvas {
@@ -36,25 +37,26 @@
     const DESIGN_SIZE = 800;
 
     const params = {
-      n: 7,
-      d: 2,
-      scale: 0.32,
-      vertices: 176,
-      maxLines: 5000000,
+      n: 9,
+      d: 4,
+      scale: 2.0,
+      speed: 0,
+      vertices: 139,
+      maxLines: 5000,
       rotationSpeed: 0,
-      morphSpeed: 0.001,
-      trail: 0.18,
-      hue: 360,
-      hueRandom: 284,
+      morphSpeed: 0.00005,
+      trail: 0.10,
+      hue: 337,
+      hueRandom: 280,
       hueSpeed: -16,
-      alpha: 0.04,
-      lineWidth: 0.1,
+      alpha: 0.01,
+      lineWidth: 0.6,
       glow: 0,
-      sparkleCount: 180,
+      sparkleCount: 0,
       sparkleSize: 1.2,
       wobble: 0,
       phaseSpeed: 0.18,
-      breathe: 0.012,
+      breathe: 0,
       autoRandom: 1,
       randomInterval: 20,
       blendMode: 'lighter'
@@ -88,21 +90,36 @@
       }
     }
 
+    function pickPair() {
+      return candidates[Math.floor(Math.random() * candidates.length)];
+    }
+
+    function setColorRandom() {
+      params.hue = Math.random() * 360;
+      params.hueRandom = 180 + Math.random() * 180;
+      colorSeed = Math.random() * 1000;
+    }
+
+    function setMorphTarget() {
+      const pair = pickPair();
+      params.n = pair[0];
+      params.d = pair[1];
+      targetN = params.n;
+      targetD = params.d;
+    }
+
     function randomize(options = {}) {
       const instant = options.instant || false;
       const changeColor = options.changeColor || false;
-      const pair = candidates[Math.floor(Math.random() * candidates.length)];
+      const continueMorph = options.continueMorph || false;
 
+      const pair = pickPair();
       params.n = pair[0];
       params.d = pair[1];
       targetN = params.n;
       targetD = params.d;
 
-      if (changeColor) {
-        params.hue = Math.random() * 360;
-        params.hueRandom = 180 + Math.random() * 180;
-        colorSeed = Math.random() * 1000;
-      }
+      if (changeColor) setColorRandom();
 
       if (instant) {
         currentN = targetN;
@@ -111,10 +128,8 @@
         ctx.fillStyle = '#05070f';
         ctx.fillRect(0, 0, w, h);
       }
-    }
 
-    function roseRadius(theta, k) {
-      return Math.cos(k * theta);
+      if (continueMorph) setMorphTarget();
     }
 
     function colorFor(index, t) {
@@ -134,7 +149,7 @@
       for (let i = 0; i < count; i++) {
         const p = i / count;
         const theta = p * loops + t * params.phaseSpeed;
-        const r = roseRadius(theta + Math.sin(t * 0.35) * params.wobble, k);
+        const r = Math.cos(k * theta);
         const breathe = 1 + Math.sin(t * 1.2 + i * 0.03) * params.breathe;
 
         points.push({
@@ -148,7 +163,6 @@
 
     function draw(time) {
       requestAnimationFrame(draw);
-
       const t = time * 0.001;
 
       if (params.autoRandom >= 1 && t - lastRandomTime > params.randomInterval) {
@@ -163,14 +177,15 @@
       ctx.fillStyle = `rgba(5, 7, 15, ${params.trail})`;
       ctx.fillRect(0, 0, w, h);
 
-      const points = getVertices(t);
+      const motionT = t * params.speed;
+      const points = getVertices(motionT);
       const maxLines = Math.round(params.maxLines);
       const fit = Math.min(w, h) / DESIGN_SIZE;
 
       ctx.save();
       ctx.translate(w / 2, h / 2);
       ctx.scale(fit, fit);
-      ctx.rotate(t * params.rotationSpeed);
+      ctx.rotate(motionT * params.rotationSpeed);
       ctx.globalCompositeOperation = params.blendMode;
       ctx.lineWidth = params.lineWidth;
       ctx.shadowBlur = 0;
@@ -184,12 +199,11 @@
           if (drawnLines >= maxLines) break;
 
           const b = points[j];
-          const stroke = colorFor(i * 17 + j * 53, t);
 
           ctx.beginPath();
           ctx.moveTo(a.x, a.y);
           ctx.lineTo(b.x, b.y);
-          ctx.strokeStyle = stroke;
+          ctx.strokeStyle = colorFor(i * 17 + j * 53, motionT);
           ctx.stroke();
 
           drawnLines++;
@@ -199,14 +213,15 @@
       }
 
       const sparkleCount = Math.min(Math.round(params.sparkleCount), points.length);
+
       if (sparkleCount > 0) {
         ctx.shadowBlur = params.glow;
 
         for (let s = 0; s < sparkleCount; s++) {
           const i = Math.floor((s / sparkleCount) * points.length);
           const p = points[i];
-          const fill = colorFor(i * 97, t);
-          const twinkle = 0.5 + 0.5 * Math.sin(t * 5 + i * 0.37);
+          const fill = colorFor(i * 97, motionT);
+          const twinkle = 0.5 + 0.5 * Math.sin(motionT * 5 + i * 0.37);
 
           ctx.beginPath();
           ctx.arc(p.x, p.y, params.sparkleSize * twinkle, 0, Math.PI * 2);
@@ -221,14 +236,15 @@
 
     window.addEventListener('resize', resize);
 
-    canvas.addEventListener('pointerdown', () => {
+    canvas.addEventListener('pointerdown', (event) => {
+      if (event.target !== canvas) return;
       enterFullscreen();
-      randomize({ instant: true, changeColor: true });
+      randomize({ instant: true, changeColor: true, continueMorph: true });
       lastRandomTime = performance.now() * 0.001;
     });
 
     resize();
-    randomize({ instant: true, changeColor: true });
+    randomize({ instant: true, changeColor: true, continueMorph: true });
     requestAnimationFrame(draw);
   </script>
 </body>
