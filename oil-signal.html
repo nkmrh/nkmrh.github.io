@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Oil Signal</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #020204;
+      touch-action: none;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .test-log {
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      max-width: min(420px, calc(100vw - 24px));
+      color: rgba(255,255,255,.68);
+      font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: rgba(0,0,0,.28);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 8px;
+      padding: 8px 10px;
+      white-space: pre-wrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .25s ease;
+      z-index: 20;
+    }
+
+    .test-log.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+  <div id="testLog" class="test-log" aria-hidden="true"></div>
+
+  <script>
+    const canvas = document.getElementById('gl');
+    const gl = canvas.getContext('webgl', {
+      antialias: false,
+      alpha: false,
+      preserveDrawingBuffer: false
+    });
+
+    if (!gl) {
+      document.body.innerHTML = '<div style="color:white;font:16px sans-serif;padding:24px">WebGL is not supported.</div>';
+      throw new Error('WebGL not supported');
+    }
+
+    const vertexShaderSource = `
+      attribute vec2 position;
+      void main() {
+        gl_Position = vec4(position, 0.0, 1.0);
+      }
+    `;
+
+    const fragmentShaderSource = `
+      precision highp float;
+
+      uniform vec2 u_resolution;
+      uniform float u_time;
+      uniform vec2 u_pointer;
+      uniform float u_drag;
+
+      uniform float u_loopSeconds;
+      uniform float u_speed;
+      uniform float u_zoom;
+      uniform float u_scale;
+      uniform float u_thickness;
+      uniform float u_bandCount;
+      uniform float u_bandSharpness;
+      uniform float u_noiseScale;
+      uniform float u_noiseStrength;
+      uniform float u_swirl;
+      uniform float u_warp;
+      uniform float u_waveCount;
+      uniform float u_waveStrength;
+      uniform float u_ripple;
+      uniform float u_dragStrength;
+      uniform float u_darkness;
+      uniform float u_reflection;
+      uniform float u_highlight;
+      uniform float u_edgeGlow;
+      uniform float u_vignette;
+      uniform float u_grain;
+      uniform float u_contrast;
+      uniform float u_brightness;
+      uniform float u_saturation;
+      uniform float u_hueShift;
+      uniform float u_colorSpread;
+      uniform float u_cellSize;
+      uniform float u_cellMix;
+      uniform float u_softBlur;
+      uniform float u_ringFlow;
+      uniform float u_ringWidth;
+      uniform float u_ringFade;
+
+      const float PI = 3.141592653589793;
+
+      mat2 rot(float a) {
+        float s = sin(a);
+        float c = cos(a);
+        return mat2(c, -s, s, c);
+      }
+
+      float hash(vec2 p) {
+        p = fract(p * vec2(123.34, 456.21));
+        p += dot(p, p + 45.32);
+        return fract(p.x * p.y);
+      }
+
+      float noise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        float a = hash(i);
+        float b = hash(i + vec2(1.0, 0.0));
+        float c = hash(i + vec2(0.0, 1.0));
+        float d = hash(i + vec2(1.0, 1.0));
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+      }
+
+      float fbm(vec2 p, float phase) {
+        float v = 0.0;
+        float amp = 0.5;
+        for (int i = 0; i < 5; i++) {
+          vec2 q = p + vec2(cos(phase + float(i) * 1.3), sin(phase + float(i) * 1.9)) * 0.28;
+          v += noise(q) * amp;
+          p = rot(0.58 + 0.07 * sin(phase)) * p * 2.02 + 1.17;
+          amp *= 0.5;
+        }
+        return v;
+      }
+
+      vec3 palette(float x) {
+        x = fract(x);
+        vec3 a = vec3(0.55, 0.48, 0.42);
+        vec3 b = vec3(0.48, 0.46, 0.52);
+        vec3 c = vec3(1.00, 1.00, 1.00);
+        vec3 d = vec3(0.00, 0.22, 0.46);
+        return clamp(a + b * cos(6.28318 * (c * x + d)), 0.0, 1.0);
+      }
+
+      vec3 hueRotate(vec3 color, float angle) {
+        float s = sin(angle);
+        float c = cos(angle);
+        mat3 m = mat3(
+          0.213 + c * 0.787 - s * 0.213,
+          0.715 - c * 0.715 - s * 0.715,
+          0.072 - c * 0.072 + s * 0.928,
+          0.213 - c * 0.213 + s * 0.143,
+          0.715 + c * 0.285 + s * 0.140,
+          0.072 - c * 0.072 - s * 0.283,
+          0.213 - c * 0.213 - s * 0.787,
+          0.715 - c * 0.715 + s * 0.715,
+          0.072 + c * 0.928 + s * 0.072
+        );
+        return clamp(m * color, 0.0, 1.0);
+      }
+
+      vec3 saturateColor(vec3 color, float sat) {
+        float luma = dot(color, vec3(0.299, 0.587, 0.114));
+        return mix(vec3(luma), color, sat);
+      }
+
+      float cells(vec2 p) {
+        vec2 g = floor(p);
+        vec2 f = fract(p);
+        float v = 1.0;
+        for (int y = -1; y <= 1; y++) {
+          for (int x = -1; x <= 1; x++) {
+            vec2 o = vec2(float(x), float(y));
+            vec2 h = vec2(hash(g + o), hash(g + o + 19.1));
+            vec2 rr = o + h - f;
+            v = min(v, dot(rr, rr));
+          }
+        }
+        return sqrt(v);
+      }
+
+      void main() {
+        vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution.xy) / min(u_resolution.x, u_resolution.y);
+        uv *= u_zoom;
+
+        float loopSeconds = max(0.1, u_loopSeconds);
+        float t = u_time * u_speed / loopSeconds;
+        float cyc = t * PI * 2.0;
+
+        vec2 pointer = (u_pointer * 2.0 - 1.0);
+        pointer.x *= u_resolution.x / min(u_resolution.x, u_resolution.y);
+        pointer.y *= u_resolution.y / min(u_resolution.x, u_resolution.y);
+        pointer.y *= -1.0;
+        pointer *= u_zoom;
+
+        vec2 p = uv * u_scale;
+        float r = length(p);
+        float a = atan(p.y, p.x);
+
+        vec2 toPointer = uv - pointer;
+        float dragRipple = sin(length(toPointer) * 18.0 - cyc * 3.0) * exp(-dot(toPointer, toPointer) * 3.8) * u_drag * u_dragStrength;
+
+        p += rot(sin(cyc) * 0.65) * vec2(
+          sin(p.y * 1.3 + cyc) + sin(a * 2.0 - cyc),
+          cos(p.x * 1.2 - cyc) + cos(r * 2.2 + cyc)
+        ) * u_warp * 0.12;
+
+        p = rot(u_swirl * sin(cyc) + r * u_swirl * 0.35) * p;
+        p += normalize(toPointer + 0.0001) * dragRipple * 0.18;
+
+        float n = fbm(p * u_noiseScale, cyc);
+        float nBack = fbm(p * u_noiseScale - vec2(cos(cyc), sin(cyc)) * 0.85, cyc + PI);
+        float cell = cells(p * max(0.1, u_cellSize) + vec2(cos(cyc), sin(cyc)) * 0.25);
+
+        float wave = sin(a * u_waveCount + r * 5.0 + cyc) * u_waveStrength;
+
+        float ringWave = 0.5 + 0.5 * sin((r * u_ringFlow - t) * PI * 2.0);
+        float ringBackWave = 0.5 + 0.5 * sin((r * u_ringFlow - t + 0.5) * PI * 2.0);
+        float ringShape = pow(ringWave, max(1.0, 1.0 / max(0.001, u_ringWidth * 18.0)));
+        float ringBackShape = pow(ringBackWave, max(1.0, 1.0 / max(0.001, u_ringWidth * 24.0)));
+        float ringMask = smoothstep(0.0, u_ringFade, 1.0 - r);
+        float ring = ringShape * ringMask;
+        float ringBack = ringBackShape * ringMask * 0.65;
+
+        float thickness = u_thickness + (n - 0.5) * u_noiseStrength + (nBack - 0.5) * u_noiseStrength * 0.55;
+        thickness += wave + ring * 0.75 + ringBack * 0.32 + dragRipple * u_ripple;
+        thickness = mix(thickness, thickness + (1.0 - cell) * 0.28, u_cellMix);
+
+        float bands = thickness * u_bandCount + n * u_colorSpread + ring * 1.8 + r * u_ringFlow * 0.22 + sin(cyc) * 0.055;
+        vec3 film = palette(bands + u_hueShift);
+
+        float stripe = 0.5 + 0.5 * sin(bands * PI * 2.0);
+        stripe = pow(stripe, max(0.1, u_bandSharpness));
+        film = mix(film * 0.45, film * 1.35, stripe);
+
+        vec3 base = vec3(0.005, 0.006, 0.009) * u_darkness;
+        float mask = smoothstep(1.7, 0.12, length(uv));
+        float puddle = smoothstep(1.26, 0.34, length(uv + vec2(0.06 * sin(cyc), 0.03 * cos(cyc))));
+        float edge = smoothstep(0.08, 0.0, abs(length(uv) - 1.02));
+
+        vec3 reflection = vec3(0.22, 0.28, 0.36) * pow(max(0.0, 1.0 - length(uv - vec2(-0.34, 0.36))), 3.0) * u_reflection;
+        vec3 highlight = vec3(1.0, 0.96, 0.82) * pow(max(0.0, 1.0 - length(uv - vec2(-0.46, 0.42))), 12.0) * u_highlight;
+
+        vec3 col = mix(base, film, puddle * mask);
+        col += reflection * puddle;
+        col += highlight * puddle;
+        col += film * edge * u_edgeGlow;
+        col += film * ring * 0.42;
+        col += vec3(0.05, 0.8, 1.0) * ringBack * 0.16;
+
+        float vignette = smoothstep(1.52, 0.12, length(uv));
+        col *= mix(1.0 - u_vignette * 0.72, 1.0, vignette);
+
+        float grain = hash(gl_FragCoord.xy) - 0.5;
+        col += grain * u_grain;
+
+        col = hueRotate(col, u_hueShift * PI * 2.0);
+        col = saturateColor(col, u_saturation);
+        col = (col - 0.5) * u_contrast + 0.5;
+        col *= u_brightness;
+        col = pow(max(col, 0.0), vec3(max(0.2, u_softBlur)));
+
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const info = gl.getShaderInfoLog(shader);
+        gl.deleteShader(shader);
+        throw new Error(info || 'Shader compile failed.');
+      }
+      return shader;
+    }
+
+    const vertexShader = compile(gl.VERTEX_SHADER, vertexShaderSource);
+    const fragmentShader = compile(gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(program) || 'Program link failed.');
+    }
+    gl.useProgram(program);
+
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1,
+       1, -1,
+      -1,  1,
+      -1,  1,
+       1, -1,
+       1,  1
+    ]), gl.STATIC_DRAW);
+
+    const position = gl.getAttribLocation(program, 'position');
+    gl.enableVertexAttribArray(position);
+    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
+
+    const uniformKeys = [
+      'loopSeconds', 'speed', 'zoom', 'scale', 'thickness', 'bandCount', 'bandSharpness',
+      'noiseScale', 'noiseStrength', 'swirl', 'warp', 'waveCount', 'waveStrength',
+      'ripple', 'dragStrength', 'darkness', 'reflection', 'highlight', 'edgeGlow',
+      'vignette', 'grain', 'contrast', 'brightness', 'saturation', 'hueShift',
+      'colorSpread', 'cellSize', 'cellMix', 'softBlur', 'ringFlow', 'ringWidth', 'ringFade'
+    ];
+
+    const uniforms = {
+      resolution: gl.getUniformLocation(program, 'u_resolution'),
+      time: gl.getUniformLocation(program, 'u_time'),
+      pointer: gl.getUniformLocation(program, 'u_pointer'),
+      drag: gl.getUniformLocation(program, 'u_drag')
+    };
+
+    for (const key of uniformKeys) {
+      uniforms[key] = gl.getUniformLocation(program, 'u_' + key);
+    }
+
+    const params = {
+      loopSeconds: 30,
+      speed: 0.51,
+      zoom: 0.45,
+      scale: 0.82,
+      thickness: -1,
+      bandCount: 24,
+      bandSharpness: 0.2,
+      noiseScale: 0.1,
+      noiseStrength: 0,
+      swirl: -3,
+      warp: 0,
+      waveCount: 0,
+      waveStrength: 0.1,
+      ripple: 0.6,
+      dragStrength: 0.15,
+      darkness: 3,
+      reflection: 0,
+      highlight: 0,
+      edgeGlow: 0,
+      vignette: 0,
+      grain: 0,
+      contrast: 3,
+      brightness: 0.69,
+      saturation: 0.42,
+      hueShift: -0.931,
+      colorSpread: 0,
+      cellSize: 0.1,
+      cellMix: 0,
+      softBlur: 0.35,
+      ringFlow: 0,
+      ringWidth: 0.01,
+      ringFade: 0.02
+    };
+
+    const auto = {
+      drag: 1.0,
+      speed: 1.0
+    };
+
+    let pointer = { x: 0.5, y: 0.5 };
+    let manualPointer = { x: 0.5, y: 0.5 };
+    let autoPointer = { x: 0.5, y: 0.5 };
+    let drag = 0;
+    let targetDrag = auto.drag;
+    let manualDrag = false;
+
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = Math.max(1, Math.floor(innerWidth * dpr));
+      const h = Math.max(1, Math.floor(innerHeight * dpr));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        gl.viewport(0, 0, w, h);
+      }
+    }
+
+    function setPointerFromEvent(e) {
+      const point = e.touches ? e.touches[0] : e;
+      manualPointer.x = point.clientX / innerWidth;
+      manualPointer.y = point.clientY / innerHeight;
+    }
+
+    function updateAutoPointer(time) {
+      const loopSeconds = Math.max(0.1, params.loopSeconds);
+      const phase = time * params.speed * auto.speed / loopSeconds;
+      const a = phase * Math.PI * 2;
+
+      const x = 0.5
+        + 0.30 * Math.sin(a + 1.7)
+        + 0.12 * Math.sin(a * 2.0 + 4.2)
+        + 0.06 * Math.sin(a * 3.0);
+      const y = 0.5
+        + 0.28 * Math.cos(a + 0.4)
+        + 0.15 * Math.sin(a * 2.0 + 2.6)
+        + 0.07 * Math.cos(a * 3.0);
+
+      autoPointer.x = Math.min(0.95, Math.max(0.05, x));
+      autoPointer.y = Math.min(0.95, Math.max(0.05, y));
+    }
+
+    const fullscreenAPI = {
+      request:
+        document.documentElement.requestFullscreen ||
+        document.documentElement.webkitRequestFullscreen ||
+        document.documentElement.mozRequestFullScreen ||
+        document.documentElement.msRequestFullscreen ||
+        null,
+      exit:
+        document.exitFullscreen ||
+        document.webkitExitFullscreen ||
+        document.mozCancelFullScreen ||
+        document.msExitFullscreen ||
+        null,
+      element() {
+        return (
+          document.fullscreenElement ||
+          document.webkitFullscreenElement ||
+          document.mozFullScreenElement ||
+          document.msFullscreenElement ||
+          null
+        );
+      }
+    };
+
+    async function toggleFullscreen() {
+      try {
+        const currentElement = fullscreenAPI.element();
+        if (currentElement) {
+          if (typeof fullscreenAPI.exit === 'function') await fullscreenAPI.exit.call(document);
+          return;
+        }
+        if (typeof fullscreenAPI.request === 'function') await fullscreenAPI.request.call(document.documentElement);
+      } catch (err) {
+        console.warn('Fullscreen request failed:', err);
+      }
+    }
+
+    window.addEventListener('pointerdown', e => {
+      setPointerFromEvent(e);
+      manualDrag = true;
+      targetDrag = 1;
+    });
+
+    window.addEventListener('pointermove', e => {
+      setPointerFromEvent(e);
+      manualDrag = true;
+      if (e.buttons) targetDrag = 1;
+    });
+
+    window.addEventListener('pointerup', () => {
+      manualDrag = false;
+      targetDrag = auto.drag;
+    });
+
+    window.addEventListener('pointercancel', () => {
+      manualDrag = false;
+      targetDrag = auto.drag;
+    });
+
+    canvas.addEventListener('click', () => toggleFullscreen());
+    window.addEventListener('resize', resize);
+
+    const testLogEl = document.getElementById('testLog');
+
+    function showTestLog(lines) {
+      if (!testLogEl) return;
+      testLogEl.textContent = lines.join('\n');
+      testLogEl.classList.add('show');
+      setTimeout(() => testLogEl.classList.remove('show'), 2200);
+    }
+
+    function runSelfTests() {
+      const results = [];
+      const pass = name => results.push(`✅ ${name}`);
+      const fail = (name, detail) => results.push(`❌ ${name}${detail ? ` — ${detail}` : ''}`);
+
+      try {
+        gl && typeof gl.getParameter === 'function' ? pass('WebGL context created') : fail('WebGL context created');
+      } catch (e) {
+        fail('WebGL context created', e.message);
+      }
+
+      try {
+        resize();
+        canvas.width > 0 && canvas.height > 0 ? pass('Canvas resize works') : fail('Canvas resize works', 'invalid size');
+      } catch (e) {
+        fail('Canvas resize works', e.message);
+      }
+
+      try {
+        typeof fullscreenAPI.request === 'function' || fullscreenAPI.request === null ? pass('Fullscreen detection safe') : fail('Fullscreen detection safe');
+      } catch (e) {
+        fail('Fullscreen detection safe', e.message);
+      }
+
+      try {
+        const missing = uniformKeys.filter(key => !(key in params));
+        missing.length === 0 ? pass('All uniforms have params') : fail('All uniforms have params', missing.join(', '));
+      } catch (e) {
+        fail('All uniforms have params', e.message);
+      }
+
+      console.log('[self-test]');
+      results.forEach(line => console.log(line));
+      showTestLog(results);
+    }
+
+    const start = performance.now();
+
+    function render(now) {
+      resize();
+      const elapsed = (now - start) * 0.001;
+
+      updateAutoPointer(elapsed);
+
+      if (manualDrag) {
+        pointer.x += (manualPointer.x - pointer.x) * 0.35;
+        pointer.y += (manualPointer.y - pointer.y) * 0.35;
+      } else {
+        pointer.x = autoPointer.x;
+        pointer.y = autoPointer.y;
+      }
+
+      targetDrag = manualDrag ? 1 : auto.drag;
+      drag = manualDrag ? drag + (targetDrag - drag) * 0.08 : auto.drag;
+
+      gl.uniform2f(uniforms.resolution, canvas.width, canvas.height);
+      gl.uniform1f(uniforms.time, elapsed);
+      gl.uniform2f(uniforms.pointer, pointer.x, pointer.y);
+      gl.uniform1f(uniforms.drag, drag);
+
+      for (const key of uniformKeys) {
+        gl.uniform1f(uniforms[key], params[key]);
+      }
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(render);
+    }
+
+    runSelfTests();
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
