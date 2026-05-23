@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Lava Lamp</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#090301}
+canvas{display:block;width:100%;height:100%;touch-action:none}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {MarchingCubes} from 'three/addons/objects/MarchingCubes.js';
+
+const canvas=document.getElementById('gl');
+const params={
+  count:7,radius:.39,merge:13.5,resolution:76,fieldScale:2.9,
+  speed:.18,orbit:.78,wobble:.18,twist:.03,viscosity:.94,autoRotate:.08,
+  hue:Math.random(),roughness:.42,exposure:.75,bloom:.32,backgroundGlow:.78
+};
+
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=params.exposure;
+
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(38,innerWidth/innerHeight,.01,100);
+camera.position.set(0,1.15,6.2);
+
+const controls=new OrbitControls(camera,canvas);
+controls.enableDamping=true;
+controls.dampingFactor=.055;
+controls.minDistance=3;
+controls.maxDistance=11;
+
+const composer=new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene,camera));
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),params.bloom,1.15,.08));
+
+function envTex(a,b){
+  const c=document.createElement('canvas');c.width=c.height=32;
+  const g=c.getContext('2d'),gr=g.createLinearGradient(0,0,32,32);
+  gr.addColorStop(0,a);gr.addColorStop(1,b);g.fillStyle=gr;g.fillRect(0,0,32,32);
+  return c.toDataURL();
+}
+scene.environment=new THREE.CubeTextureLoader().load([
+  envTex('#fff3d7','#ff7a2f'),envTex('#ffb15a','#160704'),
+  envTex('#fff6dc','#ffd080'),envTex('#180805','#020101'),
+  envTex('#ffbe62','#7a1e0a'),envTex('#050201','#fff1d0')
+]);
+
+const bg=new THREE.Mesh(
+  new THREE.PlaneGeometry(18,18),
+  new THREE.ShaderMaterial({
+    transparent:true,depthWrite:false,depthTest:false,
+    uniforms:{hue:{value:params.hue},glow:{value:params.backgroundGlow}},
+    vertexShader:`varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,-.98,1.);}`,
+    fragmentShader:`
+    precision highp float;varying vec2 vUv;uniform float hue,glow;
+    void main(){
+      vec2 uv=vUv,p=uv*2.-1.;p.x*=1.25;
+      vec3 base=.5+.5*cos(6.28318*(hue+vec3(0.,.33,.67)));
+      vec3 deep=base*vec3(.08,.045,.035);
+      vec3 mid=base*vec3(.38,.18,.08);
+      vec3 lamp=base*vec3(1.,.55,.18);
+      float center=exp(-dot(p*vec2(.72,.88),p*vec2(.72,.88)));
+      float bottom=exp(-pow((uv.y-.02)*4.8,2.))*exp(-p.x*p.x*.8);
+      float vignette=smoothstep(1.35,.18,length(p));
+      vec3 color=mix(deep,mid,center*.55);
+      color+=lamp*bottom*(1.2+glow*.7);
+      color*=vignette;
+      gl_FragColor=vec4(color,.96);
+    }`
+  })
+);
+bg.renderOrder=-10;
+scene.add(bg);
+
+scene.add(new THREE.HemisphereLight(0xffe2b8,0x220704,1.45));
+const key=new THREE.DirectionalLight(0xffd9a0,1.4);key.position.set(-3.5,4.2,2.4);scene.add(key);
+const rim=new THREE.DirectionalLight(0xff8a36,1.1);rim.position.set(3.4,2.2,-3.4);scene.add(rim);
+const glow=new THREE.PointLight(0xff6a1f,8,9);glow.position.set(-2.5,1.1,2.5);scene.add(glow);
+const lamp=new THREE.PointLight(0xffb15a,54,8.5);lamp.position.set(0,-2.45,1.2);scene.add(lamp);
+
+const mat=new THREE.MeshPhysicalMaterial({
+  color:new THREE.Color().setHSL(params.hue,.76,.56),
+  flatShading:false,metalness:0,roughness:params.roughness,transparent:true,opacity:1,
+  envMapIntensity:1.4,clearcoat:1,clearcoatRoughness:.08,specularIntensity:1
+});
+const meta=new MarchingCubes(params.resolution,mat,true,false,180000);
+meta.scale.setScalar(params.fieldScale);
+meta.isolation=96;
+scene.add(meta);
+
+const raycaster=new THREE.Raycaster();
+const pointer=new THREE.Vector2();
+const grabbed={index:-1,plane:new THREE.Plane(),offset:new THREE.Vector3(),point:new THREE.Vector3()};
+const overrides=new Map();
+let handles=[];
+let seeds=[];
+let down=false,colorDrag=false,moved=false,last={x:0,y:0};
+
+function makeSeeds(){
+  seeds=[];
+  for(let i=0;i<32;i++)seeds.push({
+    a:Math.random()*Math.PI*2,b:Math.random()*Math.PI*2,c:Math.random()*Math.PI*2,
+    sx:.55+Math.random()*1.1,sy:.45+Math.random()*1.2,sz:.55+Math.random()*1.1,
+    speed:.45+Math.random()*.85,phase:Math.random()*Math.PI*2,size:.72+Math.random()*.52
+  });
+}
+makeSeeds();
+
+function makeHandles(){
+  handles.forEach(h=>{scene.remove(h);h.geometry.dispose();h.material.dispose();});
+  handles=[];
+  for(let i=0;i<params.count;i++){
+    const h=new THREE.Mesh(new THREE.SphereGeometry(.105,16,10),new THREE.MeshBasicMaterial({transparent:true,opacity:0}));
+    h.userData.index=i;scene.add(h);handles.push(h);
+  }
+}
+makeHandles();
+
+function balls(t){
+  const arr=[];
+  for(let i=0;i<params.count;i++){
+    const s=seeds[i],tt=t*params.speed*s.speed+s.phase;
+    const rise=((tt*.23+i/params.count)%1)*2-1;
+    const y=Math.sin(rise*Math.PI-Math.PI/2)*1.35;
+    const animated={
+      x:Math.sin(s.a)*params.orbit*.55+Math.sin(tt*.7+s.b)*params.wobble*.55,
+      y,
+      z:Math.cos(tt*.5+s.c)*params.wobble*.65,
+      r:params.radius*s.size*(.88+Math.sin(tt*1.4+i)*.16)
+    };
+    const m=overrides.get(i);
+    arr.push(m?{x:m.x,y:m.y,z:m.z,r:animated.r}:animated);
+  }
+  arr.push({x:0,y:-1.62,z:0,r:params.radius*1.18});
+  arr.push({x:Math.sin(t*.12)*.12,y:1.62,z:0,r:params.radius*.82});
+  return arr;
+}
+
+function update(t){
+  const bs=balls(t);
+  for(let i=0;i<handles.length;i++){
+    const b=bs[i];handles[i].position.set(b.x,b.y,b.z);
+  }
+  meta.reset();
+  for(const b of bs){
+    meta.addBall(
+      b.x/(params.fieldScale*2)+.5,
+      b.y/(params.fieldScale*2)+.5,
+      b.z/(params.fieldScale*2)+.5,
+      Math.max(.05,b.r*(1+params.viscosity*.22)),
+      params.merge*(1-params.viscosity*.16)
+    );
+  }
+  meta.update();
+  if(params.twist>0){
+    const p=meta.geometry.attributes.position,n=meta.geometry.attributes.normal;
+    for(let i=0;i<p.count;i++){
+      const x=p.getX(i),y=p.getY(i),z=p.getZ(i),a=y*params.twist*.16,ca=Math.cos(a),sa=Math.sin(a);
+      p.setXYZ(i,x*ca-z*sa,y,x*sa+z*ca);
+      if(n){const nx=n.getX(i),ny=n.getY(i),nz=n.getZ(i);n.setXYZ(i,nx*ca-nz*sa,ny,nx*sa+nz*ca);}
+    }
+    p.needsUpdate=true;if(n)n.needsUpdate=true;
+  }
+}
+
+function setHue(h){
+  params.hue=((h%1)+1)%1;
+  mat.color.setHSL(params.hue,.78,.56);
+  key.color.setHSL((params.hue+.05)%1,.9,.72);
+  rim.color.setHSL((params.hue+.10)%1,.9,.58);
+  glow.color.setHSL((params.hue+.03)%1,.9,.55);
+  lamp.color.setHSL((params.hue+.02)%1,.95,.62);
+  bg.material.uniforms.hue.value=params.hue;
+  const c1=new THREE.Color().setHSL(params.hue,.78,.16);
+  const c2=new THREE.Color().setHSL((params.hue+.04)%1,.82,.055);
+  document.body.style.background=`radial-gradient(circle at 50% 100%, #${c1.getHexString()} 0%, #${c2.getHexString()} 48%, rgb(1,1,2) 100%)`;
+}
+setHue(params.hue);
+
+function setPointer(e){
+  const r=canvas.getBoundingClientRect();
+  pointer.x=((e.clientX-r.left)/r.width)*2-1;
+  pointer.y=-((e.clientY-r.top)/r.height)*2+1;
+}
+function pick(e){
+  setPointer(e);raycaster.setFromCamera(pointer,camera);
+  return raycaster.intersectObjects(handles,false)[0]||null;
+}
+function planePoint(e){
+  setPointer(e);raycaster.setFromCamera(pointer,camera);
+  return raycaster.ray.intersectPlane(grabbed.plane,grabbed.point);
+}
+function dragColor(e){
+  const r=canvas.getBoundingClientRect();
+  setHue(((e.clientX-r.left)/r.width)+((e.clientY-r.top)/r.height)*.25);
+}
+
+canvas.addEventListener('pointerdown',e=>{
+  down=true;moved=false;last.x=e.clientX;last.y=e.clientY;
+  const hit=pick(e);
+  if(hit){
+    grabbed.index=hit.object.userData.index;
+    grabbed.plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()),hit.object.position);
+    planePoint(e);
+    grabbed.offset.copy(hit.object.position).sub(grabbed.point);
+    overrides.set(grabbed.index,hit.object.position.clone());
+  }else colorDrag=true;
+  controls.enabled=false;
+  canvas.setPointerCapture?.(e.pointerId);
+});
+canvas.addEventListener('pointermove',e=>{
+  if(!down)return;
+  if(Math.hypot(e.clientX-last.x,e.clientY-last.y)>3)moved=true;
+  if(colorDrag&&grabbed.index<0){dragColor(e);return;}
+  if(grabbed.index<0)return;
+  const p=planePoint(e);if(!p)return;
+  p.add(grabbed.offset);
+  const lim=params.fieldScale*.86;
+  p.x=THREE.MathUtils.clamp(p.x,-lim,lim);
+  p.y=THREE.MathUtils.clamp(p.y,-lim,lim);
+  p.z=THREE.MathUtils.clamp(p.z,-lim,lim);
+  const cur=overrides.get(grabbed.index)||p.clone();
+  cur.lerp(p,Math.max(.035,(1-params.viscosity)*.45));
+  overrides.set(grabbed.index,cur.clone());
+});
+addEventListener('pointerup',e=>{
+  down=false;colorDrag=false;grabbed.index=-1;controls.enabled=true;
+  canvas.releasePointerCapture?.(e.pointerId);
+});
+canvas.addEventListener('click',()=>{if(!moved){if(!document.fullscreenElement)document.documentElement.requestFullscreen?.();else document.exitFullscreen?.();}});
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);
+});
+
+const clock=new THREE.Clock();
+function animate(){
+  const t=clock.getElapsedTime();
+  controls.update();
+  meta.rotation.y+=params.autoRotate*.002;
+  glow.position.x=-2.5+Math.sin(t*.28)*.7;
+  glow.position.z=2.2+Math.cos(t*.21)*.7;
+  update(t);
+  composer.render();
+  requestAnimationFrame(animate);
+}
+animate();
+</script>
+</body>
+</html>
