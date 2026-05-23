@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Luminous Vortex</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #02030a;
+      touch-action: none;
+      user-select: none;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<script>
+(() => {
+  const canvas = document.getElementById('gl');
+  const gl = canvas.getContext('webgl', {
+    alpha: false,
+    antialias: false,
+    depth: false,
+    stencil: false,
+    preserveDrawingBuffer: false
+  });
+
+  if (!gl) {
+    document.body.innerHTML = '<div style="color:white;font-family:sans-serif;padding:24px">WebGL not supported</div>';
+    return;
+  }
+
+  const defaultParams = {
+    speed: 0.18,
+    globalScale: 1.0,
+    timeWarp: 1.0,
+
+    slicesBase: 9.0,
+    slicesSwing: 3.0,
+    foldSharpness: 1.0,
+
+    swirlStrength: 0.32,
+    swirlScale1: 4.0,
+    swirlScale2: 9.0,
+    swirlSpeed1: 5.0,
+    swirlSpeed2: 3.0,
+    rotationSpeed: 1.2,
+    waveMix: 0.5,
+
+    noiseScale1: 2.2,
+    noiseScale2: 6.0,
+    noiseSpeedX1: 2.0,
+    noiseSpeedY1: -1.4,
+    noiseSpeedX2: -1.7,
+    noiseSpeedY2: -2.2,
+    noiseAmount1: 0.9,
+    noiseAmount2: 0.28,
+    fbmOctaves: 5.0,
+
+    ring1Radius: 0.22,
+    ring1Swing: 0.05,
+    ring1Width: 0.035,
+    ring2Radius: 0.52,
+    ring2Swing: 0.04,
+    ring2Width: 0.045,
+    ring3Radius: 0.82,
+    ring3Swing: 0.03,
+    ring3Width: 0.055,
+    ringIntensity: 0.9,
+
+    beadCount: 7.0,
+    beadStartRadius: 0.16,
+    beadRadiusStep: 0.115,
+    beadSwing: 0.03,
+    beadSize: 0.012,
+    beadPulse: 0.006,
+    beadSpeed: 1.1,
+    beadSpeedStep: 0.12,
+    beadIntensity: 1.3,
+
+    lineFrequency: 12.0,
+    lineSpeed: 10.0,
+    lineSharpness: 18.0,
+    lineIntensity: 0.5,
+
+    hueShift: 0.0,
+    colorSpeed: 0.7,
+    colorDistance: 0.45,
+    colorMix: 0.45,
+    colorMixSwing: 0.35,
+    saturation: 1.0,
+    brightness: 1.0,
+    contrast: 1.55,
+    gamma: 0.92,
+
+    coreSize: 3.2,
+    coreIntensity: 1.2,
+    sparklePower: 7.0,
+    sparkleIntensity: 1.5,
+    vignetteInner: 0.12,
+    vignetteOuter: 1.45,
+
+    pointerPull: 0.22,
+    pointerDragPull: 0.18,
+    pointerGlow: 0.45,
+    pointerSmooth: 0.08,
+    dragSmooth: 0.08,
+
+    pixelRatio: 2.0
+  };
+
+  const params = { ...defaultParams };
+
+  const vertex = `
+    attribute vec2 position;
+    void main() {
+      gl_Position = vec4(position, 0.0, 1.0);
+    }
+  `;
+
+  const fragment = `
+    precision highp float;
+
+    uniform vec2 u_resolution;
+    uniform float u_time;
+    uniform vec2 u_pointer;
+    uniform float u_drag;
+
+    uniform float u_speed;
+    uniform float u_globalScale;
+    uniform float u_timeWarp;
+    uniform float u_slicesBase;
+    uniform float u_slicesSwing;
+    uniform float u_foldSharpness;
+    uniform float u_swirlStrength;
+    uniform float u_swirlScale1;
+    uniform float u_swirlScale2;
+    uniform float u_swirlSpeed1;
+    uniform float u_swirlSpeed2;
+    uniform float u_rotationSpeed;
+    uniform float u_waveMix;
+    uniform float u_noiseScale1;
+    uniform float u_noiseScale2;
+    uniform float u_noiseSpeedX1;
+    uniform float u_noiseSpeedY1;
+    uniform float u_noiseSpeedX2;
+    uniform float u_noiseSpeedY2;
+    uniform float u_noiseAmount1;
+    uniform float u_noiseAmount2;
+    uniform float u_fbmOctaves;
+    uniform float u_ring1Radius;
+    uniform float u_ring1Swing;
+    uniform float u_ring1Width;
+    uniform float u_ring2Radius;
+    uniform float u_ring2Swing;
+    uniform float u_ring2Width;
+    uniform float u_ring3Radius;
+    uniform float u_ring3Swing;
+    uniform float u_ring3Width;
+    uniform float u_ringIntensity;
+    uniform float u_beadCount;
+    uniform float u_beadStartRadius;
+    uniform float u_beadRadiusStep;
+    uniform float u_beadSwing;
+    uniform float u_beadSize;
+    uniform float u_beadPulse;
+    uniform float u_beadSpeed;
+    uniform float u_beadSpeedStep;
+    uniform float u_beadIntensity;
+    uniform float u_lineFrequency;
+    uniform float u_lineSpeed;
+    uniform float u_lineSharpness;
+    uniform float u_lineIntensity;
+    uniform float u_hueShift;
+    uniform float u_colorSpeed;
+    uniform float u_colorDistance;
+    uniform float u_colorMix;
+    uniform float u_colorMixSwing;
+    uniform float u_saturation;
+    uniform float u_brightness;
+    uniform float u_contrast;
+    uniform float u_gamma;
+    uniform float u_coreSize;
+    uniform float u_coreIntensity;
+    uniform float u_sparklePower;
+    uniform float u_sparkleIntensity;
+    uniform float u_vignetteInner;
+    uniform float u_vignetteOuter;
+    uniform float u_pointerPull;
+    uniform float u_pointerDragPull;
+    uniform float u_pointerGlow;
+
+    #define PI 3.14159265359
+
+    mat2 rot(float a) {
+      float s = sin(a), c = cos(a);
+      return mat2(c, -s, s, c);
+    }
+
+    float hash(vec2 p) {
+      p = fract(p * vec2(123.34, 456.21));
+      p += dot(p, p + 45.32);
+      return fract(p.x * p.y);
+    }
+
+    float noise(vec2 p) {
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      float a = hash(i);
+      float b = hash(i + vec2(1.0, 0.0));
+      float c = hash(i + vec2(0.0, 1.0));
+      float d = hash(i + vec2(1.0, 1.0));
+      return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    }
+
+    float fbm(vec2 p) {
+      float v = 0.0;
+      float a = 0.5;
+      for (int i = 0; i < 5; i++) {
+        if (float(i) >= u_fbmOctaves) break;
+        v += a * noise(p);
+        p = rot(0.7) * p * 2.02 + 11.7;
+        a *= 0.5;
+      }
+      return v;
+    }
+
+    vec3 palette(float t) {
+      t += u_hueShift;
+      vec3 a = vec3(0.46, 0.37, 0.62);
+      vec3 b = vec3(0.45, 0.38, 0.34);
+      vec3 c = vec3(1.00, 1.00, 1.00);
+      vec3 d = vec3(0.02, 0.18, 0.38);
+      vec3 col = a + b * cos(6.28318 * (c * t + d));
+      float gray = dot(col, vec3(0.299, 0.587, 0.114));
+      col = mix(vec3(gray), col, u_saturation);
+      return col * u_brightness;
+    }
+
+    float ring(vec2 p, float r, float w) {
+      return exp(-abs(length(p) - r) / max(w, 0.0001));
+    }
+
+    void main() {
+      vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution.xy) / min(u_resolution.x, u_resolution.y);
+      uv *= u_globalScale;
+
+      vec2 mouse = (u_pointer * 2.0 - u_resolution.xy) / min(u_resolution.x, u_resolution.y);
+      mouse.y *= -1.0;
+      mouse *= u_globalScale;
+
+      float t = u_time * u_speed * u_timeWarp;
+      float d = length(uv);
+      float a = atan(uv.y, uv.x);
+
+      float slices = max(1.0, u_slicesBase + u_slicesSwing * sin(t * 0.7));
+      float sector = PI * 2.0 / slices;
+      a = mod(a + sector * 0.5, sector) - sector * 0.5;
+      a = mix(a, abs(a), u_foldSharpness);
+
+      vec2 p = vec2(cos(a), sin(a)) * d;
+
+      vec2 pull = mouse * (u_pointerPull + u_pointerDragPull * u_drag);
+      p -= pull * exp(-d * 1.7);
+
+      float swirl = sin(d * u_swirlScale1 - t * u_swirlSpeed1) + u_waveMix * sin(d * u_swirlScale2 + t * u_swirlSpeed2);
+      p *= rot(swirl * u_swirlStrength + t * u_rotationSpeed);
+
+      vec2 q = p;
+      q.x += 0.28 * u_waveMix * sin(q.y * 4.0 + t * 7.0);
+      q.y += 0.28 * u_waveMix * cos(q.x * 4.0 - t * 6.0);
+
+      float n = fbm(q * u_noiseScale1 + vec2(t * u_noiseSpeedX1, t * u_noiseSpeedY1));
+      float n2 = fbm(q * u_noiseScale2 + vec2(t * u_noiseSpeedX2, t * u_noiseSpeedY2));
+
+      float beads = 0.0;
+      for (int i = 0; i < 16; i++) {
+        float fi = float(i);
+        if (fi >= u_beadCount) break;
+        float rr = u_beadStartRadius + fi * u_beadRadiusStep + u_beadSwing * sin(t * 4.0 + fi);
+        float aa = a + t * (u_beadSpeed + fi * u_beadSpeedStep) + fi * 1.9;
+        vec2 bp = vec2(cos(aa), sin(aa)) * rr;
+        float pulse = u_beadSize + u_beadPulse * sin(t * 10.0 + fi * 2.0);
+        beads += exp(-length(p - bp) / max(pulse, 0.0001)) * (0.55 + 0.45 * sin(t * 8.0 + fi));
+      }
+
+      float lines = pow(abs(sin((atan(q.y, q.x) * slices + length(q) * u_lineFrequency - t * u_lineSpeed))), u_lineSharpness);
+
+      float halo = 0.0;
+      halo += ring(q, u_ring1Radius + u_ring1Swing * sin(t * 2.1), u_ring1Width);
+      halo += ring(q, u_ring2Radius + u_ring2Swing * sin(t * 1.3), u_ring2Width);
+      halo += ring(q, u_ring3Radius + u_ring3Swing * sin(t * 1.7), u_ring3Width);
+
+      float core = exp(-length(q) * u_coreSize);
+      float field = 0.0;
+      field += n * u_noiseAmount1;
+      field += n2 * u_noiseAmount2;
+      field += halo * u_ringIntensity;
+      field += lines * u_lineIntensity;
+      field += beads * u_beadIntensity;
+      field += core * u_coreIntensity;
+
+      vec3 col = palette(n + d * u_colorDistance + t * u_colorSpeed);
+      vec3 col2 = palette(n2 + 0.35 + t * u_colorSpeed * 0.5);
+      col = mix(col, col2, clamp(u_colorMix + u_colorMixSwing * sin(d * 4.0 - t * 3.0), 0.0, 1.0));
+
+      float vignette = smoothstep(u_vignetteOuter, u_vignetteInner, d);
+      float sparkle = pow(max(0.0, n2), u_sparklePower) * u_sparkleIntensity;
+      float dragFlash = u_drag * exp(-length(uv - mouse) * 3.0) * u_pointerGlow;
+
+      col *= field * vignette;
+      col += sparkle * palette(t + n2);
+      col += dragFlash * vec3(0.7, 0.9, 1.0);
+
+      col = 1.0 - exp(-col * u_contrast);
+      col = pow(max(col, 0.0), vec3(u_gamma));
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  function shader(type, source) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, source);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      throw new Error(gl.getShaderInfoLog(s));
+    }
+    return s;
+  }
+
+  const program = gl.createProgram();
+  gl.attachShader(program, shader(gl.VERTEX_SHADER, vertex));
+  gl.attachShader(program, shader(gl.FRAGMENT_SHADER, fragment));
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(program));
+  }
+  gl.useProgram(program);
+
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1, -1,  1, -1, -1,  1,
+    -1,  1,  1, -1,  1,  1
+  ]), gl.STATIC_DRAW);
+
+  const pos = gl.getAttribLocation(program, 'position');
+  gl.enableVertexAttribArray(pos);
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+  const uniforms = {
+    resolution: gl.getUniformLocation(program, 'u_resolution'),
+    time: gl.getUniformLocation(program, 'u_time'),
+    pointer: gl.getUniformLocation(program, 'u_pointer'),
+    drag: gl.getUniformLocation(program, 'u_drag')
+  };
+
+  for (const key of Object.keys(defaultParams)) {
+    if (key !== 'pixelRatio' && key !== 'pointerSmooth' && key !== 'dragSmooth') {
+      uniforms[key] = gl.getUniformLocation(program, 'u_' + key);
+    }
+  }
+
+  let w = 0, h = 0, dpr = 1;
+  let pointerX = innerWidth * 0.5;
+  let pointerY = innerHeight * 0.5;
+  let targetX = pointerX;
+  let targetY = pointerY;
+  let dragging = false;
+  let dragValue = 0;
+
+  function resize() {
+    dpr = Math.min(devicePixelRatio || 1, params.pixelRatio);
+    w = Math.floor(innerWidth * dpr);
+    h = Math.floor(innerHeight * dpr);
+    canvas.width = w;
+    canvas.height = h;
+    gl.viewport(0, 0, w, h);
+  }
+
+  addEventListener('resize', resize, { passive: true });
+  resize();
+
+  function setPointer(e) {
+    const p = e.touches ? e.touches[0] : e;
+    targetX = p.clientX * dpr;
+    targetY = (innerHeight - p.clientY) * dpr;
+  }
+
+  addEventListener('pointerdown', e => {
+    dragging = true;
+    setPointer(e);
+    if (document.fullscreenEnabled && !document.fullscreenElement && e.target === canvas) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  });
+  addEventListener('pointermove', setPointer);
+  addEventListener('pointerup', () => dragging = false);
+  addEventListener('pointercancel', () => dragging = false);
+
+  const start = performance.now();
+
+  function draw(now) {
+    const time = (now - start) / 1000;
+
+    pointerX += (targetX - pointerX) * params.pointerSmooth;
+    pointerY += (targetY - pointerY) * params.pointerSmooth;
+    dragValue += ((dragging ? 1 : 0) - dragValue) * params.dragSmooth;
+
+    gl.uniform2f(uniforms.resolution, w, h);
+    gl.uniform1f(uniforms.time, time);
+    gl.uniform2f(uniforms.pointer, pointerX, pointerY);
+    gl.uniform1f(uniforms.drag, dragValue);
+
+    for (const key of Object.keys(defaultParams)) {
+      if (uniforms[key]) gl.uniform1f(uniforms[key], params[key]);
+    }
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    requestAnimationFrame(draw);
+  }
+
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
