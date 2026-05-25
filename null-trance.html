@@ -1,0 +1,637 @@
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Null Trance</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      touch-action: none;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+<script>
+(function () {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  const params = {
+    cutSeconds: 0.40,
+    fade: 0.04,
+    speed: 0.10,
+    lineWidth: 1.70,
+    size: 0.97,
+    brightness: 1.00,
+    flash: 0.00,
+    dragEnergy: 0.04,
+
+    ringsCount: 58,
+    ringsRadius: 1.0,
+    ringsSpeed: 0.06,
+
+    radialCount: 60,
+    radialInner: 0.16,
+    radialRotate: 0.08,
+
+    dotCount: 21,
+    dotTurns: 3,
+    dotRadius: 1.0,
+
+    waveCount: 50,
+    waveAmp: 0.12,
+    waveSpeed: 1.4,
+
+    gridCount: 18,
+    gridThreshold: 0.55,
+    gridRotate: 0.035,
+
+    boxCount: 24,
+    boxRotate: 0.12,
+    boxTwist: 0.08,
+
+    scanCount: 30,
+    scanWobble: 0.045,
+    scanSpeed: 2.2,
+
+    orbitCount: 30,
+    orbitRadius: 1.0,
+    orbitSpeed: 0.42,
+
+    crossCount: 30,
+    crossRotate: 0.1,
+    crossLength: 1.0,
+
+    bpm: 145,
+    master: 0.70,
+    kick: 1.50,
+    bass: 0.41,
+    acid: 0.12,
+    acidRate: 0.80,
+    delay: 0.22,
+    feedback: 0.28,
+    delayTime: 0.18,
+    cutFill: true
+  };
+
+  let w = 0;
+  let h = 0;
+  let dpr = 1;
+  let cx = 0;
+  let cy = 0;
+  let minSide = 0;
+  let time = 0;
+  let last = performance.now();
+  let cutTimer = 0;
+  let scene = 0;
+  let flashAmount = 0;
+  let energy = 0;
+  let pointerDown = false;
+  let px = 0;
+  let py = 0;
+
+  let audio = null;
+  let clock = null;
+  let step = 0;
+  let audioEnabled = false;
+
+  const TAU = Math.PI * 2;
+  const sceneCount = 9;
+  const bassNotes = [43.65, 43.65, 65.41, 43.65, 43.65, 87.31, 65.41, 43.65];
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function rand(min, max) {
+    return min + Math.random() * (max - min);
+  }
+
+  function randi(min, max) {
+    return Math.floor(rand(min, max + 1));
+  }
+
+  function resize() {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    w = Math.floor(window.innerWidth * dpr);
+    h = Math.floor(window.innerHeight * dpr);
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    cx = w * 0.5;
+    cy = h * 0.5;
+    minSide = Math.min(w, h);
+  }
+
+  function visualRadius() {
+    return minSide * 0.28 * params.size;
+  }
+
+  function fadeCanvas() {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(0,0,0,' + params.fade + ')';
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  function clearCanvas() {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  function white(alpha) {
+    return 'rgba(255,255,255,' + (alpha * params.brightness) + ')';
+  }
+
+  function drawRings() {
+    const count = Math.max(2, Math.floor(params.ringsCount));
+    const maxR = visualRadius() * params.ringsRadius;
+    ctx.globalCompositeOperation = 'screen';
+    ctx.lineWidth = dpr * 0.85 * params.lineWidth;
+
+    for (let i = 0; i < count; i++) {
+      const p = i / count;
+      const radius = ((p + time * params.ringsSpeed) % 1) * maxR;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, TAU);
+      ctx.strokeStyle = white(0.34 * (1 - p));
+      ctx.stroke();
+    }
+  }
+
+  function drawRadials() {
+    const count = Math.max(3, Math.floor(params.radialCount));
+    const maxR = visualRadius();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.lineWidth = dpr * 0.9 * params.lineWidth;
+
+    for (let i = 0; i < count; i++) {
+      const angle = i / count * TAU + time * params.radialRotate;
+      const r1 = maxR * params.radialInner;
+      const r2 = maxR;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(angle) * r1, cy + Math.sin(angle) * r1);
+      ctx.lineTo(cx + Math.cos(angle) * r2, cy + Math.sin(angle) * r2);
+      ctx.strokeStyle = white(0.36);
+      ctx.stroke();
+    }
+  }
+
+  function drawDots() {
+    const count = Math.max(6, Math.floor(params.dotCount));
+    const maxR = visualRadius() * params.dotRadius;
+    ctx.globalCompositeOperation = 'screen';
+
+    const half = Math.ceil(count / 2);
+    for (let i = 0; i < half; i++) {
+      const p = i / Math.max(1, half - 1);
+      const angle = p * TAU * params.dotTurns + time * 0.28;
+      const radius = maxR * (0.12 + p * 0.88);
+      const dotSize = dpr * (0.9 + 1.8 * (1 - p)) * params.lineWidth;
+      const alpha = white(0.44);
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+
+      ctx.beginPath();
+      ctx.arc(cx + x, cy + y, dotSize, 0, TAU);
+      ctx.fillStyle = alpha;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(cx - x, cy - y, dotSize, 0, TAU);
+      ctx.fillStyle = alpha;
+      ctx.fill();
+    }
+  }
+
+  function drawWaves() {
+    const count = Math.max(2, Math.floor(params.waveCount));
+    const maxR = visualRadius();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.lineWidth = dpr * 0.85 * params.lineWidth;
+
+    for (let i = 0; i < count; i++) {
+      const y = cy - maxR + i / Math.max(1, count - 1) * maxR * 2;
+      const amp = maxR * (params.waveAmp + energy * 0.05);
+      ctx.beginPath();
+      ctx.moveTo(cx - maxR, y);
+      ctx.bezierCurveTo(
+        cx - maxR * 0.34,
+        y + Math.sin(time * params.waveSpeed + i) * amp,
+        cx + maxR * 0.34,
+        y - Math.cos(time * params.waveSpeed + i) * amp,
+        cx + maxR,
+        y
+      );
+      ctx.strokeStyle = white(0.36);
+      ctx.stroke();
+    }
+  }
+
+  function drawGrid() {
+    const count = Math.max(3, Math.floor(params.gridCount));
+    const maxR = visualRadius();
+    const spacing = maxR / Math.max(1, count);
+    ctx.globalCompositeOperation = 'screen';
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(time * params.gridRotate);
+
+    for (let y = -count; y <= count; y++) {
+      for (let x = -count; x <= count; x++) {
+        const distance = Math.hypot(x, y) / Math.max(1, count);
+        if (distance > 1) continue;
+        const wave = Math.sin((x * x + y * y) * 0.3 - time * 1.8);
+        if (wave < params.gridThreshold) continue;
+        const dotSize = dpr * (0.9 + wave * 1.4) * params.lineWidth;
+        ctx.beginPath();
+        ctx.arc(x * spacing, y * spacing, dotSize, 0, TAU);
+        ctx.fillStyle = white(0.34 * (1 - distance * 0.55));
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  function drawBoxPulse() {
+    const count = Math.max(2, Math.floor(params.boxCount));
+    const maxR = visualRadius();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.lineWidth = dpr * 0.9 * params.lineWidth;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(time * params.boxRotate);
+
+    for (let i = 0; i < count; i++) {
+      const p = i / count;
+      const size = maxR * 2 * (0.16 + p * 0.84);
+      ctx.save();
+      ctx.rotate(i * params.boxTwist + time * 0.04);
+      ctx.strokeStyle = white(0.34 * (1 - p));
+      ctx.strokeRect(-size * 0.5, -size * 0.5, size, size);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  function drawVerticalScan() {
+    const count = Math.max(2, Math.floor(params.scanCount));
+    const maxR = visualRadius();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.lineWidth = dpr * 0.9 * params.lineWidth;
+
+    for (let i = 0; i < count; i++) {
+      const p = count === 1 ? 0.5 : i / (count - 1);
+      const x = cx - maxR + p * maxR * 2;
+      const y1 = cy - maxR;
+      const y2 = cy + maxR;
+      const wobble = Math.sin(time * params.scanSpeed + i) * maxR * params.scanWobble;
+      ctx.beginPath();
+      ctx.moveTo(x + wobble, y1);
+      ctx.lineTo(x - wobble, y2);
+      ctx.strokeStyle = white(0.34 + 0.1 * Math.sin(time * 3 + i));
+      ctx.stroke();
+    }
+  }
+
+  function drawOrbitPair() {
+    const count = Math.max(4, Math.floor(params.orbitCount));
+    const maxR = visualRadius() * params.orbitRadius;
+    ctx.globalCompositeOperation = 'screen';
+    ctx.lineWidth = dpr * 0.75 * params.lineWidth;
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, maxR, 0, TAU);
+    ctx.strokeStyle = white(0.12);
+    ctx.stroke();
+
+    const half = Math.ceil(count / 2);
+    for (let i = 0; i < half; i++) {
+      const p = i / Math.max(1, half - 1);
+      const angle = p * TAU + time * params.orbitSpeed;
+      const radius = maxR * (0.35 + 0.42 * Math.sin(time * 1.7 + i));
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+      const dotSize = dpr * (1.1 + 1.4 * Math.pow(Math.sin(time * 2 + i), 2)) * params.lineWidth;
+      const alpha = white(0.42);
+
+      ctx.beginPath();
+      ctx.arc(cx + x, cy + y, dotSize, 0, TAU);
+      ctx.fillStyle = alpha;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(cx - x, cy - y, dotSize, 0, TAU);
+      ctx.fillStyle = alpha;
+      ctx.fill();
+    }
+  }
+
+  function drawCrossFold() {
+    const count = Math.max(2, Math.floor(params.crossCount));
+    const maxR = visualRadius() * params.crossLength;
+    ctx.globalCompositeOperation = 'screen';
+    ctx.lineWidth = dpr * 0.8 * params.lineWidth;
+
+    for (let i = 0; i < count; i++) {
+      const p = i / count;
+      const len = maxR * (0.18 + p * 0.82);
+      const rot = time * params.crossRotate + i * 0.05;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(rot);
+      ctx.beginPath();
+      ctx.moveTo(-len, 0);
+      ctx.lineTo(len, 0);
+      ctx.moveTo(0, -len);
+      ctx.lineTo(0, len);
+      ctx.strokeStyle = white(0.28 * (1 - p * 0.45));
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function randomizeVisualParamsForScene() {
+    params.ringsCount = randi(8, 60);
+    params.ringsRadius = rand(0.45, 1.0);
+    params.ringsSpeed = rand(0.02, 0.18);
+
+    params.radialCount = randi(5, 60);
+    params.radialInner = rand(0.0, 0.35);
+    params.radialRotate = rand(0.02, 0.22);
+
+    params.dotCount = randi(8, 120);
+    params.dotTurns = rand(1.5, 7.5);
+    params.dotRadius = rand(0.45, 1.0);
+
+    params.waveCount = randi(2, 50);
+    params.waveAmp = rand(0.03, 0.28);
+    params.waveSpeed = rand(0.5, 3.5);
+
+    params.gridCount = randi(4, 30);
+    params.gridThreshold = rand(-0.1, 0.85);
+    params.gridRotate = rand(0.0, 0.12);
+
+    params.boxCount = randi(3, 48);
+    params.boxRotate = rand(0.02, 0.28);
+    params.boxTwist = rand(0.0, 0.2);
+
+    params.scanCount = randi(3, 54);
+    params.scanWobble = rand(0.0, 0.1);
+    params.scanSpeed = rand(0.6, 4.2);
+
+    params.orbitCount = randi(8, 110);
+    params.orbitRadius = rand(0.45, 1.0);
+    params.orbitSpeed = rand(0.1, 1.2);
+
+    params.crossCount = randi(3, 58);
+    params.crossRotate = rand(0.02, 0.24);
+    params.crossLength = rand(0.45, 1.0);
+  }
+
+  function triggerFill() {
+    if (!audio || !params.cutFill || !audioEnabled) return;
+    const ac = audio.ac;
+    const base = ac.currentTime + 0.02;
+    for (let i = 0; i < 4; i++) {
+      acid(ac, base + i * 0.055);
+    }
+  }
+
+  function nextScene() {
+    const previousScene = scene;
+    if (sceneCount > 1) {
+      do {
+        scene = Math.floor(Math.random() * sceneCount);
+      } while (scene === previousScene);
+    } else {
+      scene = 0;
+    }
+
+    randomizeVisualParamsForScene();
+    cutTimer = 0;
+    flashAmount = params.flash;
+    clearCanvas();
+    triggerFill();
+  }
+
+  function draw(now) {
+    const dt = Math.min(0.04, (now - last) / 1000);
+    last = now;
+    time += dt * params.speed;
+    cutTimer += dt;
+    energy *= Math.pow(0.9, dt * 60);
+
+    if (cutTimer > params.cutSeconds) {
+      nextScene();
+    }
+
+    fadeCanvas();
+
+    if (scene === 0) drawRings();
+    if (scene === 1) drawRadials();
+    if (scene === 2) drawDots();
+    if (scene === 3) drawWaves();
+    if (scene === 4) drawGrid();
+    if (scene === 5) drawBoxPulse();
+    if (scene === 6) drawVerticalScan();
+    if (scene === 7) drawOrbitPair();
+    if (scene === 8) drawCrossFold();
+
+    if (flashAmount > 0.01) {
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = 'rgba(255,255,255,' + (flashAmount * 0.18) + ')';
+      ctx.fillRect(0, 0, w, h);
+      flashAmount *= Math.pow(0.68, dt * 60);
+    }
+
+    requestAnimationFrame(draw);
+  }
+
+  function stepMs() {
+    return 60 / params.bpm / 4 * 1000;
+  }
+
+  function applyAudioParams() {
+    if (!audio) return;
+    const now = audio.ac.currentTime;
+    audio.master.gain.setTargetAtTime(audioEnabled ? params.master : 0.0001, now, 0.02);
+    audio.delay.delayTime.setTargetAtTime(params.delayTime, now, 0.02);
+    audio.feedback.gain.setTargetAtTime(params.feedback, now, 0.02);
+    audio.delayGain.gain.setTargetAtTime(params.delay, now, 0.02);
+  }
+
+  function env(ac, at, peak, decay) {
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(0.0001, at);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, peak), at + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + decay);
+    return gain;
+  }
+
+  function kick(ac, at) {
+    if (params.kick <= 0 || !audioEnabled) return;
+    const osc = ac.createOscillator();
+    const gain = env(ac, at, params.kick, 0.32);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(120, at);
+    osc.frequency.exponentialRampToValueAtTime(42, at + 0.15);
+    osc.connect(gain).connect(audio.master);
+    osc.start(at);
+    osc.stop(at + 0.34);
+  }
+
+  function bass(ac, at, freq) {
+    if (params.bass <= 0 || !audioEnabled) return;
+    const osc = ac.createOscillator();
+    const filter = ac.createBiquadFilter();
+    const gain = env(ac, at, params.bass, 0.16);
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq, at);
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(180, at);
+    filter.frequency.exponentialRampToValueAtTime(900, at + 0.035);
+    filter.frequency.exponentialRampToValueAtTime(130, at + 0.14);
+    filter.Q.value = 8;
+    osc.connect(filter).connect(gain).connect(audio.master);
+    osc.start(at);
+    osc.stop(at + 0.18);
+  }
+
+  function acid(ac, at) {
+    if (params.acid <= 0 || !audioEnabled) return;
+    const notes = [174.61, 196, 261.63, 293.66, 349.23, 392, 523.25];
+    const index = (step + scene * 2 + Math.floor(Math.random() * notes.length)) % notes.length;
+    const freq = notes[index] * (Math.random() < 0.2 ? 2 : 1);
+    const osc = ac.createOscillator();
+    const filter = ac.createBiquadFilter();
+    const gain = env(ac, at, params.acid, 0.22);
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq, at);
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(700 + Math.sin(time * 3) * 300, at);
+    filter.frequency.exponentialRampToValueAtTime(2400 + Math.random() * 1600, at + 0.08);
+    filter.Q.value = 18;
+    osc.connect(filter).connect(gain).connect(audio.delay);
+    osc.start(at);
+    osc.stop(at + 0.24);
+  }
+
+  function scheduleAudio() {
+    if (!audio) return;
+    const ac = audio.ac;
+    const at = ac.currentTime + 0.035;
+    const s = step % 16;
+
+    if (s % 4 === 0) kick(ac, at);
+    if (s % 4 !== 0) bass(ac, at, bassNotes[(step + scene) % bassNotes.length]);
+    if ((s % 3 === 0 || s === 15) && Math.random() < params.acidRate) acid(ac, at);
+
+    step++;
+  }
+
+  async function startAudioEngine() {
+    if (audio) return;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const ac = new AudioContextClass();
+
+    const master = ac.createGain();
+    const delay = ac.createDelay();
+    const feedback = ac.createGain();
+    const delayGain = ac.createGain();
+
+    master.gain.value = 0;
+    delay.delayTime.value = params.delayTime;
+    feedback.gain.value = params.feedback;
+    delayGain.gain.value = params.delay;
+
+    delay.connect(feedback);
+    feedback.connect(delay);
+    delay.connect(delayGain);
+    delayGain.connect(master);
+    master.connect(ac.destination);
+
+    audio = {
+      ac: ac,
+      master: master,
+      delay: delay,
+      feedback: feedback,
+      delayGain: delayGain
+    };
+
+    clock = setInterval(scheduleAudio, stepMs());
+    applyAudioParams();
+  }
+
+  async function toggleAudio() {
+    await startAudioEngine();
+    if (!audio) return;
+
+    if (audio.ac.state === 'suspended') {
+      await audio.ac.resume();
+    }
+
+    audioEnabled = !audioEnabled;
+    const now = audio.ac.currentTime;
+    const target = audioEnabled ? params.master : 0.0001;
+    audio.master.gain.cancelScheduledValues(now);
+    audio.master.gain.setTargetAtTime(target, now, 0.025);
+  }
+
+  canvas.addEventListener('pointerdown', function (event) {
+    pointerDown = true;
+    px = event.clientX;
+    py = event.clientY;
+    energy = 1;
+    nextScene();
+
+    toggleAudio();
+  });
+
+  canvas.addEventListener('pointermove', function (event) {
+    if (!pointerDown) return;
+    const dx = event.clientX - px;
+    const dy = event.clientY - py;
+    px = event.clientX;
+    py = event.clientY;
+    energy = clamp(energy + Math.hypot(dx, dy) * params.dragEnergy, 0, 2.4);
+  });
+
+  window.addEventListener('pointerup', function () {
+    pointerDown = false;
+  });
+
+  window.addEventListener('dblclick', async function () {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen().catch(function () {});
+    } else {
+      await document.exitFullscreen().catch(function () {});
+    }
+  });
+
+  window.addEventListener('resize', resize, { passive: true });
+
+  resize();
+  scene = Math.floor(Math.random() * sceneCount);
+  randomizeVisualParamsForScene();
+  clearCanvas();
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
