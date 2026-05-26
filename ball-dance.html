@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Ball Dance</title>
+<style>
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    touch-action: manipulation;
+    user-select: none;
+  }
+
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+  }
+
+  .panel,
+  .hint {
+    display: none !important;
+  }
+</style>
+</head>
+<body>
+<canvas id="vj"></canvas>
+
+<div class="panel hidden" id="panel" aria-hidden="true">
+  <h1>BALL DANCE</h1>
+  <div class="buttons">
+    <button id="startBtn">START</button>
+    <button id="randomBtn">RANDOM</button>
+    <button id="resetBtn">RESET</button>
+  </div>
+  <div class="group" data-group="visual"><div class="group-title">VISUAL</div></div>
+  <div class="group" data-group="motion"><div class="group-title">MOTION</div></div>
+  <div class="group" data-group="audio"><div class="group-title">AUDIO</div></div>
+</div>
+<div class="hint hide" id="hint"></div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('vj');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const hint = document.getElementById('hint');
+  const panel = document.getElementById('panel');
+  const startBtn = document.getElementById('startBtn');
+  const randomBtn = document.getElementById('randomBtn');
+  const resetBtn = document.getElementById('resetBtn');
+
+  const TAU = Math.PI * 2;
+
+  const defaults = {
+    cutSpeed: 1,
+    minCircles: 2,
+    maxCircles: 8,
+    circleScale: 0.25,
+    cameraZoom: 1.86,
+    layoutScale: 0.44,
+    sizeVariation: 0,
+    uniformSize: 0,
+    circleMotion: 0,
+    circleMotionSpeed: 0,
+    formationMotion: 2,
+    snapMotion: 0,
+    holdBeats: 0.20,
+    splitBeats: 0.35,
+    springOvershoot: 0.10,
+    springBounce: 0.55,
+
+    bpm: 138,
+    volume: 0.55,
+    delayWet: 0.24,
+    delayFeedback: 0.35,
+    filterCutoff: 9000,
+    kickLevel: 0.85,
+    bassLevel: 0.70,
+    hatLevel: 0.65,
+    pluckLevel: 0.85,
+    padLevel: 0.35
+  };
+
+  const params = { ...defaults };
+
+  let w = 1;
+  let h = 1;
+  let dpr = 1;
+  let cx = 0;
+  let cy = 0;
+  let minSide = 1;
+
+  let started = false;
+  let playing = true;
+  let lastTapTime = 0;
+  let singleTapTimer = null;
+  let startTime = performance.now();
+  let lastFrameTime = performance.now();
+  let cutTimer = 0;
+  let currentCut = null;
+
+  let audio = null;
+  let masterNode = null;
+  let delayWetNode = null;
+  let delayFbNode = null;
+  let filterNode = null;
+
+  function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+  }
+
+  function lerp(a, b, t) {
+    return a + (b - a) * t;
+  }
+
+  function easeInOut(t) {
+    return t * t * (3 - 2 * t);
+  }
+
+  function springOut(t) {
+    if (t >= 0.995) return 1;
+    const base = 1 - Math.pow(1 - t, 4);
+    const decay = Math.pow(1 - t, 2.2);
+    const wave = Math.sin(t * Math.PI * 2.2);
+    return base + wave * decay * params.springOvershoot * params.springBounce;
+  }
+
+  function randomInt(min, maxInclusive) {
+    return min + Math.floor(Math.random() * (maxInclusive - min + 1));
+  }
+
+  function resetCanvasTransform() {
+    if (typeof ctx.setTransform === 'function') {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return;
+    }
+    if (typeof ctx.resetTransform === 'function') {
+      ctx.resetTransform();
+    }
+    ctx.scale(dpr, dpr);
+  }
+
+  function resize() {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    w = Math.floor(window.innerWidth);
+    h = Math.floor(window.innerHeight);
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    resetCanvasTransform();
+    cx = w * 0.5;
+    cy = h * 0.5;
+    minSide = Math.min(w, h);
+  }
+
+  function makeCut() {
+    const minN = Math.round(clamp(params.minCircles, 2, 8));
+    const maxN = Math.round(clamp(params.maxCircles, minN, 8));
+    return {
+      count: randomInt(minN, maxN),
+      formation: randomInt(0, 23),
+      baseSize: lerp(0.08, 0.12, Math.random()),
+      zoom: lerp(0.96, 1.04, Math.random())
+    };
+  }
+
+  function polygonPoints(count, radius, rotation) {
+    const pts = [];
+    for (let i = 0; i < count; i += 1) {
+      const a = rotation + (i / count) * TAU;
+      pts.push([Math.cos(a) * radius, Math.sin(a) * radius]);
+    }
+    return pts;
+  }
+
+  function alignedTargets(count, formation) {
+    const mode = formation % 24;
+
+    if (mode === 0) {
+      if (count === 2) return [[-0.42, 0], [0.42, 0]];
+      return polygonPoints(count, count <= 4 ? 0.48 : 0.58, count === 4 ? Math.PI / 4 : -Math.PI / 2);
+    }
+
+    if (mode === 1) {
+      const spacing = count <= 4 ? 0.42 : 0.28;
+      const start = -spacing * (count - 1) * 0.5;
+      return Array.from({ length: count }, (_, i) => [start + spacing * i, 0]);
+    }
+
+    if (mode === 2) {
+      const spacing = count <= 4 ? 0.42 : 0.28;
+      const start = -spacing * (count - 1) * 0.5;
+      return Array.from({ length: count }, (_, i) => [0, start + spacing * i]);
+    }
+
+    if (mode === 3) {
+      if (count === 2) return [[-0.42, 0], [0.42, 0]];
+      if (count === 3) return polygonPoints(3, 0.48, -Math.PI / 2);
+      const cols = Math.ceil(Math.sqrt(count));
+      const rows = Math.ceil(count / cols);
+      const spacing = 0.34;
+      const totalW = spacing * (cols - 1);
+      const totalH = spacing * (rows - 1);
+      return Array.from({ length: count }, (_, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        return [col * spacing - totalW * 0.5, row * spacing - totalH * 0.5];
+      });
+    }
+
+    if (mode === 4) {
+      const spacing = count <= 4 ? 0.36 : 0.25;
+      const start = -spacing * (count - 1) * 0.5;
+      return Array.from({ length: count }, (_, i) => {
+        const v = start + spacing * i;
+        return [v, -v];
+      });
+    }
+
+    if (mode === 5) {
+      if (count === 2) return [[-0.42, 0], [0.42, 0]];
+      if (count === 3) return [[-0.42, 0.24], [0, -0.24], [0.42, 0.24]];
+      if (count === 4) return [[-0.42, -0.24], [0.42, -0.24], [-0.42, 0.24], [0.42, 0.24]];
+      const rows = Math.ceil(count / 2);
+      const ySpacing = 0.28;
+      const startY = -ySpacing * (rows - 1) * 0.5;
+      return Array.from({ length: count }, (_, i) => {
+        const row = Math.floor(i / 2);
+        const side = i % 2 === 0 ? -1 : 1;
+        const lastSingle = i === count - 1 && count % 2 === 1;
+        return [lastSingle ? 0 : side * 0.32, startY + row * ySpacing];
+      });
+    }
+
+    if (mode === 6) {
+      return [[0, -0.58], [0.58, 0], [0, 0.58], [-0.58, 0], [0, 0], [0.38, -0.38], [0.38, 0.38], [-0.38, 0.38]].slice(0, count);
+    }
+
+    if (mode === 7) {
+      const rows = Math.ceil(count / 2);
+      const ySpacing = rows <= 2 ? 0.38 : 0.28;
+      const startY = -ySpacing * (rows - 1) * 0.5;
+      return Array.from({ length: count }, (_, i) => {
+        const col = i % 2;
+        const row = Math.floor(i / 2);
+        const lastSingle = i === count - 1 && count % 2 === 1;
+        return [lastSingle ? 0 : (col === 0 ? -0.32 : 0.32), startY + row * ySpacing];
+      });
+    }
+
+    if (mode === 8) {
+      const cols = Math.ceil(count / 2);
+      const xSpacing = cols <= 2 ? 0.40 : 0.28;
+      const startX = -xSpacing * (cols - 1) * 0.5;
+      return Array.from({ length: count }, (_, i) => {
+        const row = Math.floor(i / cols);
+        const col = i % cols;
+        return [startX + col * xSpacing, count <= cols ? 0 : (row === 0 ? -0.26 : 0.26)];
+      });
+    }
+
+    if (mode === 9 || mode === 10) {
+      const half = (count - 1) * 0.5;
+      return Array.from({ length: count }, (_, i) => {
+        const x = (i - half) * (count <= 4 ? 0.28 : 0.20);
+        const y = Math.abs(i - half) * 0.18 - 0.18;
+        return [x, mode === 9 ? y : -y];
+      });
+    }
+
+    if (mode === 11) {
+      if (count <= 3) return [[-0.38, 0.18], [0, -0.18], [0.38, 0.18]].slice(0, count);
+      return [[-0.42, -0.30], [0.42, -0.30], [-0.42, 0], [0.42, 0], [-0.42, 0.30], [0.42, 0.30], [-0.10, 0.30], [0.10, 0.30]].slice(0, count);
+    }
+
+    if (mode === 12) {
+      if (count === 2) return [[-0.32, 0], [0.32, 0]];
+      return [[0, 0]].concat(polygonPoints(count - 1, 0.56, -Math.PI / 2)).slice(0, count);
+    }
+
+    if (mode === 13 || mode === 14) {
+      const spacing = count <= 4 ? 0.30 : 0.22;
+      const start = -spacing * (count - 1) * 0.5;
+      return Array.from({ length: count }, (_, i) => {
+        const v = start + spacing * i;
+        return [v, mode === 13 ? v * 0.72 : -v * 0.72];
+      });
+    }
+
+    if (mode === 15 || mode === 16) {
+      const top = mode === 15 ? Math.ceil(count / 2) : Math.floor(count / 2);
+      const bottom = count - top;
+      const pts = [];
+      const sx = 0.30;
+      for (let i = 0; i < top; i += 1) pts.push([(i - (top - 1) / 2) * sx, -0.24]);
+      for (let i = 0; i < bottom; i += 1) pts.push([(i - (bottom - 1) / 2) * sx, 0.24]);
+      return pts;
+    }
+
+    if (mode === 17) {
+      const cols = 3;
+      const rows = Math.ceil(count / cols);
+      const sx = 0.30;
+      const sy = 0.28;
+      return Array.from({ length: count }, (_, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const rowCount = Math.min(cols, count - row * cols);
+        return [(col - (rowCount - 1) / 2) * sx, (row - (rows - 1) / 2) * sy];
+      });
+    }
+
+    if (mode === 18) {
+      const rows = 3;
+      const cols = Math.ceil(count / rows);
+      const sx = 0.30;
+      const sy = 0.28;
+      return Array.from({ length: count }, (_, i) => {
+        const row = i % rows;
+        const col = Math.floor(i / rows);
+        const colCount = Math.min(rows, count - col * rows);
+        return [(col - (cols - 1) / 2) * sx, (row - (colCount - 1) / 2) * sy];
+      });
+    }
+
+    if (mode === 19) {
+      const outer = count <= 4 ? count : count - 1;
+      const pts = polygonPoints(outer, count <= 4 ? 0.44 : 0.54, Math.PI / 4);
+      if (count > 4) pts.push([0, 0]);
+      return pts.slice(0, count);
+    }
+
+    if (mode === 20 || mode === 21) {
+      const horizontal = mode === 20;
+      const radiusX = horizontal ? (count <= 4 ? 0.56 : 0.66) : (count <= 4 ? 0.30 : 0.38);
+      const radiusY = horizontal ? (count <= 4 ? 0.30 : 0.38) : (count <= 4 ? 0.56 : 0.66);
+      return Array.from({ length: count }, (_, i) => {
+        const a = -Math.PI / 2 + (i / count) * TAU;
+        return [Math.cos(a) * radiusX, Math.sin(a) * radiusY];
+      });
+    }
+
+    if (mode === 22 || mode === 23) {
+      const spacing = count <= 4 ? 0.34 : 0.24;
+      const start = -spacing * (count - 1) * 0.5;
+      return Array.from({ length: count }, (_, i) => {
+        const v = start + spacing * i;
+        const alt = i % 2 === 0 ? -0.18 : 0.18;
+        return mode === 22 ? [v, alt] : [alt, v];
+      });
+    }
+
+    return polygonPoints(count, 0.5, -Math.PI / 2);
+  }
+
+  function getProgress() {
+    const beatSeconds = 60 / Math.max(1, params.bpm);
+    const interval = beatSeconds / Math.max(0.01, params.cutSpeed);
+    const raw = interval > 0 ? clamp(cutTimer / interval, 0, 1) : 0;
+    const hold = clamp(params.holdBeats, 0, 0.85);
+    const splitDuration = clamp(params.splitBeats, 0.05, 1 - hold);
+    const t = clamp((raw - hold) / splitDuration, 0, 1);
+    return springOut(t);
+  }
+
+  function getCircle(cut, i, elapsed) {
+    const progress = getProgress();
+    const targets = alignedTargets(cut.count, cut.formation).slice().sort((a, b) => {
+      if (Math.abs(a[1] - b[1]) > 0.001) return a[1] - b[1];
+      return a[0] - b[0];
+    });
+
+    const target = targets[i % targets.length];
+    const unit = minSide * 0.36 * params.layoutScale * params.formationMotion;
+    let x = target[0] * unit * progress;
+    let y = target[1] * unit * progress;
+    let radius = params.uniformSize >= 0.5 ? minSide * 0.10 : cut.baseSize * minSide;
+
+    if (params.uniformSize < 0.5 && params.sizeVariation > 0) {
+      radius *= lerp(1 - 0.25 * params.sizeVariation, 1 + 0.25 * params.sizeVariation, i / Math.max(1, cut.count - 1));
+    }
+
+    radius *= params.circleScale;
+
+    const motionAmount = minSide * 0.02 * params.circleMotion * progress;
+    if (motionAmount > 0) {
+      const t = elapsed * params.circleMotionSpeed + i * TAU / Math.max(1, cut.count);
+      x += Math.cos(t) * motionAmount;
+      y += Math.sin(t) * motionAmount;
+    }
+
+    return { x, y, radius };
+  }
+
+  function drawCircle(x, y, radius) {
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, TAU);
+    ctx.fill();
+  }
+
+  function resetCuts() {
+    cutTimer = 0;
+    currentCut = makeCut();
+  }
+
+  function render(now) {
+    const dt = Math.min(0.1, (now - lastFrameTime) / 1000);
+    lastFrameTime = now;
+
+    if (playing) {
+      const beatSeconds = 60 / Math.max(1, params.bpm);
+      const interval = beatSeconds / Math.max(0.01, params.cutSpeed);
+      cutTimer += dt;
+      while (cutTimer >= interval) {
+        cutTimer -= interval;
+        currentCut = makeCut();
+      }
+    }
+
+    const elapsed = (now - startTime) / 1000;
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.fillStyle = '#fff';
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(params.cameraZoom * currentCut.zoom, params.cameraZoom * currentCut.zoom);
+
+    for (let i = 0; i < currentCut.count; i += 1) {
+      const c = getCircle(currentCut, i, elapsed);
+      drawCircle(c.x, c.y, c.radius);
+    }
+
+    ctx.restore();
+    requestAnimationFrame(render);
+  }
+
+  function createAudio() {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const ac = new AudioContext();
+    const master = ac.createGain();
+    const delay = ac.createDelay(1.0);
+    const delayFb = ac.createGain();
+    const delayWet = ac.createGain();
+    const filter = ac.createBiquadFilter();
+    const comp = ac.createDynamicsCompressor();
+
+    master.gain.value = params.volume;
+    delay.delayTime.value = (60 / params.bpm) * 0.75;
+    delayFb.gain.value = params.delayFeedback;
+    delayWet.gain.value = params.delayWet;
+    filter.type = 'lowpass';
+    filter.frequency.value = params.filterCutoff;
+    filter.Q.value = 0.7;
+    comp.threshold.value = -16;
+    comp.knee.value = 18;
+    comp.ratio.value = 4;
+    comp.attack.value = 0.006;
+    comp.release.value = 0.18;
+
+    delay.connect(delayFb);
+    delayFb.connect(delay);
+    delay.connect(delayWet);
+    delayWet.connect(filter);
+    filter.connect(comp);
+    master.connect(comp);
+    comp.connect(ac.destination);
+
+    masterNode = master;
+    delayWetNode = delayWet;
+    delayFbNode = delayFb;
+    filterNode = filter;
+
+    const scale = [0, 3, 5, 7, 10, 12, 15, 17];
+    let step = 0;
+    let timer = null;
+
+    function midiToHz(m) {
+      return 440 * Math.pow(2, (m - 69) / 12);
+    }
+
+    function envGain(at, dur, peak, release) {
+      const gain = ac.createGain();
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), at + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + dur + release);
+      return gain;
+    }
+
+    function kick(at) {
+      const osc = ac.createOscillator();
+      const gain = envGain(at, 0.22, 1.0 * params.kickLevel, 0.08);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(130, at);
+      osc.frequency.exponentialRampToValueAtTime(43, at + 0.15);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(at);
+      osc.stop(at + 0.32);
+    }
+
+    function bass(at, note) {
+      const osc = ac.createOscillator();
+      const low = ac.createBiquadFilter();
+      const gain = envGain(at, 0.12, 0.20 * params.bassLevel, 0.04);
+      osc.type = 'sawtooth';
+      osc.frequency.value = midiToHz(note);
+      low.type = 'lowpass';
+      low.frequency.setValueAtTime(440, at);
+      low.frequency.exponentialRampToValueAtTime(95, at + 0.13);
+      low.Q.value = 8;
+      osc.connect(low);
+      low.connect(gain);
+      gain.connect(master);
+      osc.start(at);
+      osc.stop(at + 0.2);
+    }
+
+    function hat(at, strong) {
+      const bufferSize = Math.floor(ac.sampleRate * 0.04);
+      const buffer = ac.createBuffer(1, bufferSize, ac.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i += 1) data[i] = Math.random() * 2 - 1;
+      const src = ac.createBufferSource();
+      const hp = ac.createBiquadFilter();
+      const gain = envGain(at, strong ? 0.035 : 0.018, (strong ? 0.09 : 0.045) * params.hatLevel, 0.015);
+      hp.type = 'highpass';
+      hp.frequency.value = 7600;
+      src.buffer = buffer;
+      src.connect(hp);
+      hp.connect(gain);
+      gain.connect(master);
+      src.start(at);
+      src.stop(at + 0.06);
+    }
+
+    function pluck(at, note, accent) {
+      const osc1 = ac.createOscillator();
+      const osc2 = ac.createOscillator();
+      const band = ac.createBiquadFilter();
+      const gain = envGain(at, 0.18, 0.085 * accent * params.pluckLevel, 0.18);
+      const hz = midiToHz(note);
+      osc1.type = 'sawtooth';
+      osc2.type = 'square';
+      osc1.frequency.value = hz;
+      osc2.frequency.value = hz * 2.001;
+      band.type = 'bandpass';
+      band.frequency.value = 1500 + Math.sin(step * 0.2) * 800;
+      band.Q.value = 3.5;
+      osc1.connect(band);
+      osc2.connect(band);
+      band.connect(gain);
+      gain.connect(master);
+      gain.connect(delay);
+      osc1.start(at);
+      osc2.start(at);
+      osc1.stop(at + 0.42);
+      osc2.stop(at + 0.42);
+    }
+
+    function schedule() {
+      const now = ac.currentTime;
+      while (audio.nextTime < now + 0.18) {
+        const s = step;
+        const at = audio.nextTime;
+        const sixteenth = s % 4;
+        const bassNote = 45 + scale[(Math.floor(s / 8) + ((s % 64) > 31 ? 2 : 0)) % scale.length];
+        if (sixteenth === 0) kick(at);
+        if (sixteenth === 2) bass(at, bassNote - 12);
+        if (s % 2 === 1) hat(at, true);
+        else if (s % 4 === 0) hat(at, false);
+        if ([0, 3, 6, 10, 13].includes(s % 16)) {
+          const note = 69 + scale[(s * 3 + Math.floor(s / 16)) % scale.length];
+          pluck(at, note, s % 16 === 0 ? 1.25 : 1.0);
+        }
+        audio.nextTime += (60 / params.bpm) / 4;
+        step += 1;
+      }
+    }
+
+    audio = {
+      ac,
+      nextTime: ac.currentTime + 0.06,
+      start() {
+        if (timer) return;
+        timer = setInterval(schedule, 25);
+      }
+    };
+    return audio;
+  }
+
+  async function start() {
+    if (!started) {
+      started = true;
+      hint.classList.add('hide');
+      startTime = performance.now();
+      lastFrameTime = performance.now();
+      resetCuts();
+      if (!audio) createAudio();
+      audio.start();
+    }
+
+    playing = true;
+    if (audio && audio.ac.state === 'suspended') {
+      await audio.ac.resume();
+    }
+  }
+
+  async function togglePlay() {
+    if (!started) {
+      await start();
+      playing = true;
+      return;
+    }
+
+    if (!playing) {
+      playing = true;
+      if (audio && audio.ac.state === 'suspended') {
+        await audio.ac.resume();
+      }
+      return;
+    }
+
+    playing = false;
+    if (audio && audio.ac.state === 'running') {
+      await audio.ac.suspend();
+    }
+  }
+
+  function toggleFullscreen() {
+    if (!document.fullscreenEnabled) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  }
+
+  resize();
+  window.addEventListener('resize', resize, { passive: true });
+  resetCuts();
+  requestAnimationFrame(render);
+
+  window.addEventListener('pointerup', () => {
+    const now = performance.now();
+    const isDoubleTap = now - lastTapTime < 280;
+    lastTapTime = now;
+
+    if (isDoubleTap) {
+      if (singleTapTimer) {
+        clearTimeout(singleTapTimer);
+        singleTapTimer = null;
+      }
+      toggleFullscreen();
+      return;
+    }
+
+    singleTapTimer = setTimeout(() => {
+      singleTapTimer = null;
+      togglePlay();
+    }, 260);
+  }, { passive: true });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === ' ') togglePlay();
+    if (e.key === 'f' && document.fullscreenEnabled) {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen().catch(() => {});
+    }
+  });
+})();
+</script>
+</body>
+</html>
