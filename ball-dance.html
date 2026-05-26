@@ -71,8 +71,8 @@
     snapMotion: 0,
     holdBeats: 0.20,
     splitBeats: 0.35,
-    springOvershoot: 0.10,
-    springBounce: 0.55,
+    springOvershoot: 0.34,
+    springBounce: 1.15,
 
     bpm: 138,
     volume: 0.55,
@@ -123,11 +123,15 @@
   }
 
   function springOut(t) {
-    if (t >= 0.995) return 1;
-    const base = 1 - Math.pow(1 - t, 4);
-    const decay = Math.pow(1 - t, 2.2);
-    const wave = Math.sin(t * Math.PI * 2.2);
-    return base + wave * decay * params.springOvershoot * params.springBounce;
+    // Clear back-easing spring:
+    // 0 -> passes beyond 1 -> returns exactly to 1.
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    const c1 = 1.70158 * params.springBounce;
+    const c3 = c1 + 1;
+    const x = t - 1;
+    const back = 1 + c3 * x * x * x + c1 * x * x;
+    return 1 + (back - 1) * params.springOvershoot;
   }
 
   function randomInt(min, maxInclusive) {
