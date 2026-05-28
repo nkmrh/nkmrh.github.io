@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Mirage</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      touch-action: manipulation;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  const scene = document.createElement('canvas');
+  const sceneCtx = scene.getContext('2d', { alpha: true });
+
+  let width = 0;
+  let height = 0;
+  let dpr = 1;
+  let time = 0;
+
+  const colorMap = new Map();
+
+  const config = {
+    gap: 82,
+    baseRadius: 56.1,
+    radiusWave: 4.2,
+    waveHeightX: 80,
+    waveHeightY: 55,
+    waveSpeed: 0.011,
+    waveFreqX: 0.015,
+    waveFreqY: 0.055,
+    diagonal: -0.45,
+    crossSpeed: 2.43,
+    crossScale: -1.83,
+    opacity: 0.39,
+    alphaMin: 0.55,
+    trail: 0.3,
+    rotation: -0.71,
+    perspective: 0.37,
+    centerPull: -0.99,
+    invert: 0,
+    randomColor: 1,
+    saturation: 92,
+    lightness: 42,
+    hueDrift: 1,
+    blendMode: 0,
+    kaleido: 1,
+    kaleidoSegments: 24,
+    kaleidoRotate: -2.16,
+    kaleidoZoom: 0.4,
+    feedback: 0.52,
+    feedbackZoom: 1.074,
+    feedbackRotate: -0.009,
+    feedbackAlpha: 0.77,
+    prism: 0.23,
+    prismShift: 10,
+    prismRotate: 0.025,
+    prismPulse: 1.18,
+    lensWarp: 0.41,
+    lensRadius: 0.6,
+    lensSwirl: -0.14,
+    lensBreath: 0.49,
+    depthFlow: 0,
+    depthSpeed: 0.003,
+    depthStrength: 3.93,
+    depthSpread: 0.66,
+    depthFade: 0.57
+  };
+
+  function getDotHue(x, y) {
+    const key = x + ',' + y;
+    if (!colorMap.has(key)) colorMap.set(key, Math.random() * 360);
+    return colorMap.get(key);
+  }
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    width = window.innerWidth;
+    height = window.innerHeight;
+
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    scene.width = Math.floor(width * dpr);
+    scene.height = Math.floor(height * dpr);
+    sceneCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function rotatePoint(x, y, angle) {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    return {
+      x: x * c - y * s,
+      y: x * s + y * c
+    };
+  }
+
+  function clearTarget(targetCtx, transparent = false) {
+    const bg = config.invert ? 255 : 0;
+
+    if (transparent) {
+      targetCtx.clearRect(0, 0, width, height);
+      return;
+    }
+
+    if (config.trail <= 0.001) {
+      targetCtx.fillStyle = `rgb(${bg},${bg},${bg})`;
+    } else {
+      targetCtx.fillStyle = `rgba(${bg},${bg},${bg},${1 - config.trail})`;
+    }
+
+    targetCtx.fillRect(0, 0, width, height);
+  }
+
+  function drawGrid(targetCtx) {
+    const cols = Math.ceil(width / config.gap) + 8;
+    const rows = Math.ceil(height / config.gap) + 8;
+    const startX = (width - (cols - 1) * config.gap) * 0.5;
+    const startY = (height - (rows - 1) * config.gap) * 0.5;
+    const cx = width * 0.5;
+    const cy = height * 0.5;
+
+    targetCtx.save();
+    targetCtx.globalCompositeOperation = config.blendMode ? 'lighter' : 'source-over';
+
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        let px = startX + x * config.gap;
+        let py = startY + y * config.gap;
+
+        const rx0 = px - cx;
+        const ry0 = py - cy;
+        const rotated = rotatePoint(rx0, ry0, config.rotation);
+        const sourceX = rotated.x + cx;
+        const sourceY = rotated.y + cy;
+
+        const phase =
+          sourceX * config.waveFreqX +
+          sourceY * config.waveFreqY +
+          (sourceX + sourceY) * config.diagonal * 0.01 +
+          time * config.waveSpeed;
+
+        const wave = Math.sin(phase);
+        const cross = Math.cos(phase * config.crossScale + time * config.waveSpeed * config.crossSpeed);
+
+        px += wave * config.waveHeightX;
+        py += cross * config.waveHeightY;
+
+        const dxFromCenter = px - cx;
+        const dyFromCenter = py - cy;
+        px += dxFromCenter * config.centerPull * 0.08 * wave;
+        py += dyFromCenter * config.centerPull * 0.08 * cross;
+
+        let depth = 1 + ((py - cy) / Math.max(height, 1)) * config.perspective;
+
+        if (config.depthFlow) {
+          const cellSeed = (x * 17.13 + y * 31.71) % 1;
+          const z = (time * config.depthSpeed + cellSeed + (x + y) * 0.011) % 1;
+          const zoom = 0.12 + Math.pow(z, 2.2) * config.depthStrength;
+          px = cx + (px - cx) * zoom * config.depthSpread;
+          py = cy + (py - cy) * zoom * config.depthSpread;
+          depth *= zoom;
+        }
+
+        const projectedX = cx + (px - cx) * depth;
+        const projectedY = cy + (py - cy) * depth;
+        const radius = Math.max(0.2, (config.baseRadius + wave * config.radiusWave) * Math.max(0.1, depth));
+
+        let alpha = config.opacity * (config.alphaMin + (1 - config.alphaMin) * Math.abs(wave));
+
+        if (config.depthFlow && config.depthFade > 0) {
+          const dist = Math.hypot(projectedX - cx, projectedY - cy) / Math.hypot(cx, cy);
+          alpha *= 1 - Math.min(1, dist) * config.depthFade;
+        }
+
+        if (config.randomColor) {
+          const hue = (getDotHue(x, y) + time * config.hueDrift) % 360;
+          targetCtx.fillStyle = `hsla(${hue}, ${config.saturation}%, ${config.lightness}%, ${alpha})`;
+        } else {
+          const dot = config.invert ? 0 : 255;
+          targetCtx.fillStyle = `rgba(${dot},${dot},${dot},${alpha})`;
+        }
+
+        targetCtx.beginPath();
+        targetCtx.arc(projectedX, projectedY, radius, 0, Math.PI * 2);
+        targetCtx.fill();
+      }
+    }
+
+    targetCtx.restore();
+  }
+
+  function drawKaleido() {
+    const cx = width * 0.5;
+    const cy = height * 0.5;
+    const radius = Math.hypot(width, height);
+    const segments = Math.max(3, Math.round(config.kaleidoSegments));
+    const angle = (Math.PI * 2) / segments;
+
+    sceneCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    clearTarget(sceneCtx, true);
+    drawGrid(sceneCtx);
+
+    ctx.save();
+    ctx.globalCompositeOperation = config.blendMode ? 'lighter' : 'source-over';
+    ctx.translate(cx, cy);
+    ctx.rotate(config.kaleidoRotate);
+    ctx.scale(config.kaleidoZoom, config.kaleidoZoom);
+
+    for (let i = 0; i < segments; i++) {
+      ctx.save();
+      ctx.rotate(i * angle);
+      if (i % 2) ctx.scale(1, -1);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, radius, -angle * 0.5, angle * 0.5);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(scene, -cx, -cy, width, height);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  function drawLensWarp() {
+    if (config.lensWarp <= 0.001) return;
+
+    sceneCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    sceneCtx.clearRect(0, 0, width, height);
+    sceneCtx.drawImage(canvas, 0, 0, width, height);
+
+    const cx = width * 0.5;
+    const cy = height * 0.5;
+    const maxR = Math.min(width, height) * config.lensRadius;
+    const rings = 52;
+    const breath = 1 + Math.sin(time * config.lensBreath * 0.035) * 0.08;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = config.lensWarp;
+
+    for (let i = rings; i > 0; i--) {
+      const t0 = (i - 1) / rings;
+      const t1 = i / rings;
+      const r0 = maxR * t0 * breath;
+      const r1 = maxR * t1 * breath;
+      const pull = Math.pow(1 - t0, 2.2) * 42 * config.lensWarp;
+      const rot = Math.pow(1 - t0, 1.8) * config.lensSwirl;
+      const scale = 1 + Math.pow(1 - t0, 2.0) * 0.22 * config.lensWarp;
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(rot + time * 0.0009 * config.lensSwirl);
+      ctx.scale(scale, scale);
+      ctx.translate(-cx, -cy);
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, r1, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r0, 0, Math.PI * 2, true);
+      ctx.closePath();
+      ctx.clip();
+
+      ctx.drawImage(scene, -pull, -pull, width + pull * 2, height + pull * 2);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  function drawPrism() {
+    if (config.prism <= 0.001) return;
+
+    sceneCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    sceneCtx.clearRect(0, 0, width, height);
+    sceneCtx.drawImage(canvas, 0, 0, width, height);
+
+    const pulse = 0.5 + 0.5 * Math.sin(time * config.prismPulse * 0.04);
+    const shift = config.prismShift * (0.35 + pulse * 0.65);
+    const rot = config.prismRotate * Math.sin(time * 0.018);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = config.prism;
+
+    ctx.translate(width * 0.5, height * 0.5);
+    ctx.rotate(rot);
+    ctx.translate(-width * 0.5, -height * 0.5);
+
+    ctx.filter = 'hue-rotate(0deg) saturate(160%)';
+    ctx.drawImage(scene, -shift, 0, width, height);
+
+    ctx.filter = 'hue-rotate(120deg) saturate(180%)';
+    ctx.drawImage(scene, shift * 0.65, -shift * 0.35, width, height);
+
+    ctx.filter = 'hue-rotate(240deg) saturate(180%)';
+    ctx.drawImage(scene, shift * 0.25, shift * 0.8, width, height);
+
+    ctx.filter = 'none';
+    ctx.restore();
+  }
+
+  function drawFeedback() {
+    if (config.feedback <= 0.001) return;
+
+    sceneCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    sceneCtx.clearRect(0, 0, width, height);
+    sceneCtx.globalAlpha = config.feedbackAlpha;
+    sceneCtx.translate(width * 0.5, height * 0.5);
+    sceneCtx.rotate(config.feedbackRotate);
+    sceneCtx.scale(config.feedbackZoom, config.feedbackZoom);
+    sceneCtx.drawImage(canvas, -width * 0.5, -height * 0.5, width, height);
+    sceneCtx.globalAlpha = 1;
+    sceneCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    ctx.save();
+    ctx.globalAlpha = config.feedback;
+    ctx.globalCompositeOperation = config.blendMode ? 'lighter' : 'source-over';
+    ctx.drawImage(scene, 0, 0, width, height);
+    ctx.restore();
+  }
+
+  function draw() {
+    time += 1;
+
+    drawFeedback();
+    clearTarget(ctx, false);
+
+    if (config.kaleido) {
+      drawKaleido();
+    } else {
+      drawGrid(ctx);
+    }
+
+    drawLensWarp();
+    drawPrism();
+
+    requestAnimationFrame(draw);
+  }
+
+  window.addEventListener('resize', resize);
+
+  canvas.addEventListener('click', async () => {
+    try {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch (_) {
+      // Preview environments may block fullscreen. Ignore safely.
+    }
+  });
+
+  resize();
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
