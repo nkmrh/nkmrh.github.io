@@ -129,7 +129,13 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       const scale = Math.min(width / referenceWidth, height / referenceHeight);
-      scaledSize = Math.max(20, baseSize * scale);
+      if (width < 600) {
+        scaledSize = Math.max(72, baseSize * scale);
+      } else if (width < 1024) {
+        scaledSize = Math.max(56, baseSize * scale);
+      } else {
+        scaledSize = Math.max(44, baseSize * scale);
+      }
       horizontalPadding = scaledSize * 8;
       columns = Math.ceil((width + horizontalPadding) / scaledSize) + 4;
       rows = Math.ceil(height / scaledSize) + 36;
