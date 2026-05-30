@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Spring Sunshine Mist</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #f6f0dc;
+      touch-action: none;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<script>
+(() => {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  const params = {
+    mistDensity: 0.58,
+    mistScale: 1.35,
+    mistSpeed: 0.018,
+    mistContrast: 0.92,
+    sunlightStrength: 2.05,
+    beamCount: 9,
+    beamWidth: 0.28,
+    beamSoftness: 0.58,
+    bloomStrength: 0.95,
+    grainAmount: 0.065,
+    warmth: 0.72,
+    drift: 0.18
+  };
+
+  let w = 0;
+  let h = 0;
+  let dpr = 1;
+  let t0 = performance.now();
+  let pointerX = 0.5;
+  let pointerY = 0.5;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    w = Math.floor(innerWidth * dpr);
+    h = Math.floor(innerHeight * dpr);
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = innerWidth + 'px';
+    canvas.style.height = innerHeight + 'px';
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+
+  window.addEventListener('pointermove', (e) => {
+    pointerX = e.clientX / innerWidth;
+    pointerY = e.clientY / innerHeight;
+  }, { passive: true });
+
+  window.addEventListener('click', async () => {
+    if (!document.fullscreenElement) {
+      try { await document.documentElement.requestFullscreen(); } catch (_) {}
+    }
+  });
+
+  function hash(x, y) {
+    let n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+    return n - Math.floor(n);
+  }
+
+  function smoothstep(a, b, x) {
+    const v = Math.max(0, Math.min(1, (x - a) / (b - a)));
+    return v * v * (3 - 2 * v);
+  }
+
+  function noise(x, y) {
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    const fx = x - ix;
+    const fy = y - iy;
+    const u = fx * fx * (3 - 2 * fx);
+    const v = fy * fy * (3 - 2 * fy);
+
+    const a = hash(ix, iy);
+    const b = hash(ix + 1, iy);
+    const c = hash(ix, iy + 1);
+    const d = hash(ix + 1, iy + 1);
+
+    return a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v;
+  }
+
+  function fbm(x, y) {
+    let value = 0;
+    let amp = 0.5;
+    let freq = 1.0;
+    for (let i = 0; i < 5; i++) {
+      value += amp * noise(x * freq, y * freq);
+      freq *= 2.03;
+      amp *= 0.52;
+    }
+    return value;
+  }
+
+  function drawBackground(time) {
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0.0, '#fff0bd');
+    sky.addColorStop(0.34, '#f1d999');
+    sky.addColorStop(0.70, '#cfe6c4');
+    sky.addColorStop(1.0, '#b7d3bd');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+
+    const sunX = w * (0.28 + (pointerX - 0.5) * 0.08);
+    const sunY = h * (0.12 + (pointerY - 0.5) * 0.05);
+    const glow = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, Math.max(w, h) * 0.82);
+    glow.addColorStop(0.0, 'rgba(255, 255, 218, 0.95)');
+    glow.addColorStop(0.16, 'rgba(255, 230, 154, 0.58)');
+    glow.addColorStop(0.42, 'rgba(255, 210, 150, 0.22)');
+    glow.addColorStop(1.0, 'rgba(255, 255, 255, 0)');
+    ctx.globalCompositeOperation = 'screen';
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+
+    const depth = ctx.createLinearGradient(0, 0, 0, h);
+    depth.addColorStop(0.0, 'rgba(255,255,255,0)');
+    depth.addColorStop(0.62, 'rgba(190,150,80,0.06)');
+    depth.addColorStop(1.0, 'rgba(70,95,70,0.13)');
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = depth;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function drawSunBeams(time) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+
+    // Very slow breathing so the piece feels composed, not like a static screensaver.
+    const breath = 0.5 + 0.5 * Math.sin(time * 0.045);
+    const secondBreath = 0.5 + 0.5 * Math.sin(time * 0.027 + 2.1);
+    const activeBeams = params.beamCount;
+
+    const topFade = h * -0.25;
+    const bottomFade = h * 1.18;
+
+    for (let i = 0; i < activeBeams; i++) {
+      const p = i / Math.max(1, activeBeams - 1);
+      const slowAngle = Math.sin(time * 0.018 + i * 0.53) * w * 0.018;
+      const sway = Math.sin(time * 0.055 + i * 1.7) * w * (0.006 + secondBreath * 0.012) + slowAngle;
+      const baseX = w * (-0.15 + p * 1.35) + sway;
+      const width = w * (params.beamWidth * (0.45 + 0.9 * hash(i, 10)));
+      const pulse = 0.64 + breath * 0.36;
+      const alpha = params.sunlightStrength * (0.13 + 0.21 * hash(i, 20)) * pulse;
+      const angleOffset = w * (0.12 + 0.22 * hash(i, 30) + Math.sin(time * 0.021 + i) * 0.035);
+
+      const grad = ctx.createLinearGradient(baseX - width, 0, baseX + width + angleOffset, h);
+      grad.addColorStop(0.00, 'rgba(255, 255, 255, 0)');
+      grad.addColorStop(0.14, `rgba(255, 154, 210, ${alpha * (0.60 + secondBreath * 0.46)})`);
+      grad.addColorStop(0.30, `rgba(255, 232, 120, ${alpha * 0.96})`);
+      grad.addColorStop(0.43, `rgba(255, 255, 230, ${alpha * 0.42})`);
+      grad.addColorStop(0.56, `rgba(142, 255, 210, ${alpha * (0.54 + breath * 0.40)})`);
+      grad.addColorStop(0.70, `rgba(105, 198, 255, ${alpha * (0.68 + secondBreath * 0.52)})`);
+      grad.addColorStop(0.84, `rgba(208, 146, 255, ${alpha * (0.52 + breath * 0.38)})`);
+      grad.addColorStop(1.00, 'rgba(255, 255, 255, 0)');
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(baseX - width * 0.35, topFade);
+      ctx.bezierCurveTo(
+        baseX + width * 0.12,
+        h * 0.22,
+        baseX + angleOffset - width * 0.25,
+        h * 0.70,
+        baseX + angleOffset - width * 0.8,
+        bottomFade
+      );
+      ctx.lineTo(baseX + angleOffset + width * 0.8, bottomFade);
+      ctx.bezierCurveTo(
+        baseX + angleOffset + width * 0.35,
+        h * 0.70,
+        baseX + width * 1.15,
+        h * 0.22,
+        baseX + width * 0.85,
+        topFade
+      );
+      ctx.closePath();
+      ctx.filter = 'none';
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  function drawMist(time) {
+    const step = Math.max(2, Math.floor(3 * dpr));
+    const image = ctx.createImageData(w, h);
+    const data = image.data;
+
+    const scale = 0.0018 / params.mistScale;
+    const driftX = time * params.mistSpeed * 18;
+    const driftY = time * params.mistSpeed * 7;
+
+    for (let y = 0; y < h; y += step) {
+      const ny = y / h;
+      const vertical = smoothstep(-0.05, 0.55, ny) * (1 - smoothstep(0.92, 1.12, ny));
+      for (let x = 0; x < w; x += step) {
+        const nx = x / w;
+        const wave = Math.sin(nx * 4.0 + time * 0.11) * params.drift;
+        let n = fbm(x * scale + driftX + wave, y * scale + driftY);
+        n = Math.pow(Math.max(0, n), 1.15);
+        const a = Math.max(0, (n - 0.23) * params.mistContrast) * vertical * params.mistDensity;
+
+        const r = 210 + 6 * params.warmth;
+        const g = 232 + 5 * params.warmth;
+        const b = 255 - 4 * params.warmth;
+        const ia = Math.floor(a * 72);
+
+        for (let yy = 0; yy < step && y + yy < h; yy++) {
+          for (let xx = 0; xx < step && x + xx < w; xx++) {
+            const idx = ((y + yy) * w + (x + xx)) * 4;
+            data[idx] = r;
+            data[idx + 1] = g;
+            data[idx + 2] = b;
+            data[idx + 3] = ia;
+          }
+        }
+      }
+    }
+
+    const off = new OffscreenCanvas(w, h);
+    const offCtx = off.getContext('2d');
+    offCtx.putImageData(image, 0, 0);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.filter = `blur(${10 * dpr}px) saturate(1.18)`;
+    ctx.drawImage(off, 0, 0);
+    ctx.restore();
+  }
+
+  function drawSoftBloom(time) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.filter = `blur(${Math.max(22, w * 0.021)}px) saturate(1.28)`;
+
+    for (let i = 0; i < 12; i++) {
+      const x = w * (hash(i, 100) + Math.sin(time * 0.05 + i) * 0.035);
+      const y = h * (0.18 + hash(i, 200) * 0.7 + Math.cos(time * 0.04 + i) * 0.025);
+      const r = Math.max(w, h) * (0.08 + hash(i, 300) * 0.18);
+      const a = params.bloomStrength * (0.025 + hash(i, 400) * 0.045);
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, `rgba(255, 246, 210, ${a})`);
+      grad.addColorStop(0.28, `rgba(255, 190, 222, ${a * 0.72})`);
+      grad.addColorStop(0.56, `rgba(170, 222, 255, ${a * 0.66})`);
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  function drawGrain(time) {
+    const amount = params.grainAmount;
+    const count = Math.floor(w * h * 0.00022);
+    ctx.save();
+    ctx.globalCompositeOperation = 'overlay';
+    for (let i = 0; i < count; i++) {
+      const x = hash(i, Math.floor(time * 10)) * w;
+      const y = hash(i + 2000, Math.floor(time * 10)) * h;
+      const a = amount * (0.08 + hash(i, 500) * 0.15);
+      ctx.fillStyle = `rgba(255,255,255,${a})`;
+      ctx.fillRect(x, y, dpr, dpr);
+    }
+    ctx.restore();
+  }
+
+  function vignette() {
+    const grad = ctx.createRadialGradient(w * 0.52, h * 0.45, Math.min(w, h) * 0.18, w * 0.52, h * 0.45, Math.max(w, h) * 0.72);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.68, 'rgba(255,244,210,0.03)');
+    grad.addColorStop(1, 'rgba(120,110,76,0.12)');
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function frame(now) {
+    const time = (now - t0) / 1000;
+
+    drawBackground(time);
+    drawSunBeams(time);
+    drawSoftBloom(time);
+    drawMist(time);
+    drawGrain(time);
+    vignette();
+
+    requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
