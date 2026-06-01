@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>After Rain</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #a3d4dc;
+      user-select: none;
+      touch-action: none;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100vw;
+      height: 100dvh;
+      min-height: 100vh;
+      background: #a3d4dc;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d", { alpha: false });
+
+    const params = {
+      pixelRatioCap: 2,
+
+      // palette
+      bgTop: [179, 220, 218],
+      bgBottom: [131, 174, 195],
+      paleGold: [255, 232, 170],
+
+      // sunshine shaft
+      shaftCount: 10,
+      shaftOpacity: 0.12,
+      shaftWidth: 0.05,
+      shaftAngle: -0.81,
+      shaftSpeed: 0.014,
+      shaftBreath: 0.22,
+      shaftBreathSpeed: 0.12,
+
+      // rainbow circles
+      dropletBaseCount: 18,
+      dropletOpacity: 0.035,
+      dropletSpeed: 0.07,
+      dropletMinRatio: 0.14,
+      dropletMaxRatio: 0.42,
+      dropletBreath: 0.055,
+      dropletBreathSpeed: 0.18,
+    };
+
+    let w = 0;
+    let h = 0;
+    let dpr = 1;
+    let start = performance.now();
+    let droplets = [];
+
+    const rand = (min, max) => min + Math.random() * (max - min);
+    const rgb = (c, a = 1) => `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${a})`;
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, params.pixelRatioCap);
+      w = Math.floor(window.innerWidth);
+      h = Math.floor(window.innerHeight);
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      canvas.style.width = w + "px";
+      canvas.style.height = h + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      initElements();
+    }
+
+    function initElements() {
+      const areaRatio = (w * h) / (1440 * 900);
+      const count = Math.max(8, Math.round(params.dropletBaseCount * areaRatio));
+      const sizeBase = Math.min(w, h);
+
+      droplets = Array.from({ length: count }, () => ({
+        x: Math.random() * w,
+        y: Math.random() * h,
+        r: rand(sizeBase * params.dropletMinRatio, sizeBase * params.dropletMaxRatio),
+        a: rand(0.20, 1.0),
+        s: rand(0.9, 2.4),
+        hue: rand(0, 360),
+        phase: rand(0, Math.PI * 2),
+      }));
+    }
+
+    function drawBackground() {
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, rgb(params.bgTop, 1));
+      g.addColorStop(1, rgb(params.bgBottom, 1));
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    function drawLightShafts(t) {
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.translate(w * 0.12, h * -0.10);
+      ctx.rotate(params.shaftAngle);
+
+      const length = Math.max(w, h) * 2.1;
+      const breath = 1 + Math.sin(t * params.shaftBreathSpeed) * params.shaftBreath;
+
+      for (let i = 0; i < params.shaftCount; i++) {
+        const offset = (i - params.shaftCount / 2) * w * params.shaftWidth;
+        const drift = Math.sin(t * params.shaftSpeed + i * 1.7) * w * 0.03;
+        const gapMask = 0.45 + 0.55 * Math.pow(Math.sin(i * 1.31 + t * 0.055) * 0.5 + 0.5, 1.8);
+        const alpha = params.shaftOpacity * gapMask * (0.55 + 0.45 * Math.sin(t * 0.07 + i)) * breath;
+
+        ctx.fillStyle = rgb(params.paleGold, alpha);
+        ctx.fillRect(offset + drift, -h * 0.18, w * 0.11, length);
+      }
+
+      ctx.restore();
+    }
+
+    function drawDroplets(t) {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+
+      for (const d of droplets) {
+        const a = params.dropletOpacity * d.a;
+        const breath = 1 + Math.sin(t * params.dropletBreathSpeed + d.phase) * params.dropletBreath;
+        const r = d.r * breath;
+
+        d.y += params.dropletSpeed * d.s;
+        d.x += Math.sin(t * 0.13 + d.phase) * 0.02;
+
+        if (d.y > h + r) {
+          d.y = -r;
+          d.x = Math.random() * w;
+        }
+
+        const gradient = ctx.createLinearGradient(d.x - r, d.y - r, d.x + r, d.y + r);
+        gradient.addColorStop(0.00, `hsla(${(d.hue + 0) % 360}, 95%, 68%, ${a})`);
+        gradient.addColorStop(0.22, `hsla(${(d.hue + 55) % 360}, 95%, 68%, ${a})`);
+        gradient.addColorStop(0.44, `hsla(${(d.hue + 120) % 360}, 95%, 68%, ${a})`);
+        gradient.addColorStop(0.66, `hsla(${(d.hue + 190) % 360}, 95%, 68%, ${a})`);
+        gradient.addColorStop(0.84, `hsla(${(d.hue + 260) % 360}, 95%, 68%, ${a})`);
+        gradient.addColorStop(1.00, `hsla(${(d.hue + 330) % 360}, 95%, 68%, ${a})`);
+
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+    }
+
+    function render(now) {
+      const t = (now - start) / 1000;
+
+      drawBackground();
+      drawLightShafts(t);
+      drawDroplets(t);
+
+      requestAnimationFrame(render);
+    }
+
+    async function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        await document.exitFullscreen().catch(() => {});
+      }
+    }
+
+    window.addEventListener("pointerup", toggleFullscreen);
+    window.addEventListener("resize", resize, { passive: true });
+
+    resize();
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
