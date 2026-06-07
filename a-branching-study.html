@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>A Branching Study</title>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      touch-action: none;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100dvh;
+      background: #000;
+    }
+
+    .hint {
+      position: fixed;
+      left: 16px;
+      bottom: 14px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      pointer-events: none;
+      user-select: none;
+      transition: opacity 600ms ease;
+    }
+
+    .hint.hidden {
+      opacity: 0;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div class="hint" id="hint">drag: color / double tap: fullscreen</div>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d", { alpha: false });
+    const hint = document.getElementById("hint");
+
+    let width = 0;
+    let height = 0;
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let lastTap = 0;
+    let branchOpacity = 1.0;
+    let colorHue = 210;
+    let colorSat = 72;
+
+    const palette = {
+      bg: "#000000",
+      glow: "rgba(255,255,255,0.08)",
+    };
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function smoothstep(t) {
+      const x = clamp(t, 0, 1);
+      return x * x * (3 - 2 * x);
+    }
+
+    function hash01(v) {
+      return 0.5 + 0.5 * Math.sin(v * 127.1 + Math.cos(v * 311.7) * 13.7);
+    }
+
+    function updatePaletteFromHue() {
+      const bgHue = ((colorHue % 360) + 360) % 360;
+      const branchHue = (bgHue + 180) % 360;
+      const bgSat = 52 + colorSat * 0.42;
+      const bgLight = 16 + colorSat * 0.04;
+      palette.bg = `hsl(${bgHue}, ${bgSat}%, ${bgLight}%)`;
+      palette.glow = `hsla(${branchHue}, ${Math.min(100, colorSat + 12)}%, 72%, 0.12)`;
+      document.body.style.background = palette.bg;
+      canvas.style.background = palette.bg;
+    }
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = Math.floor(window.innerWidth * dpr);
+      height = Math.floor(window.innerHeight * dpr);
+      canvas.width = width;
+      canvas.height = height;
+      canvas.style.width = window.innerWidth + "px";
+      canvas.style.height = window.innerHeight + "px";
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+    }
+
+    function clearFrame() {
+      ctx.fillStyle = palette.bg;
+      ctx.fillRect(0, 0, width, height);
+    }
+
+    function drawSegment(a, b, lineWidth, color) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+
+    function branchColor(branchId, chosen, depth, alphaScale = 1) {
+      const baseHue = (colorHue + 180) % 360;
+      const hueJitter = (hash01(branchId * 0.73 + depth * 1.91) - 0.5) * 46;
+      const hue = (baseHue + hueJitter + 360) % 360;
+      const sat = chosen ? Math.min(100, colorSat + 10) : Math.min(100, colorSat + 16);
+      const light = chosen ? 58 : 52;
+      const alpha = (chosen ? 1.0 : 0.92) * alphaScale * branchOpacity;
+      return `hsla(${hue}, ${sat}%, ${light}%, ${alpha})`;
+    }
+
+    function buildFractal(seedTime) {
+      const nodes = [];
+      const path = [];
+      const maxDepth = 10;
+      const baseLen = Math.min(width, height) * 0.11;
+      const rootAngle = -Math.PI / 2 + Math.sin(seedTime * 0.045) * 0.16;
+
+      function grow(x, y, angle, len, depth, branchId, chosen) {
+        if (depth > maxDepth || len < 1.2) return;
+
+        const bend = Math.sin(seedTime * 0.18 + branchId * 0.73 + depth * 0.41) * 0.22;
+        const segAngle = angle + bend;
+        const nx = x + Math.cos(segAngle) * len;
+        const ny = y + Math.sin(segAngle) * len;
+
+        const node = {
+          x1: x,
+          y1: y,
+          x2: nx,
+          y2: ny,
+          angle: segAngle,
+          len,
+          depth,
+          chosen,
+          branchId,
+        };
+
+        nodes.push(node);
+        if (chosen) path.push(node);
+
+        const baseSpread = 0.40 + Math.sin(seedTime * 0.14 + depth * 0.8 + branchId) * 0.12;
+        const noiseA = hash01(branchId * 1.17 + depth * 2.31 + seedTime * 0.05);
+        const noiseB = hash01(branchId * 1.91 + depth * 1.73 + 3.1 + seedTime * 0.045);
+        const preferredSign = noiseA > 0.5 ? 1 : -1;
+
+        const chosenAngle = segAngle + preferredSign * (baseSpread + noiseB * 0.25);
+        const siblingAngle = segAngle - preferredSign * (baseSpread * 0.85 + noiseA * 0.18);
+        const tertiaryAngle = segAngle + preferredSign * 0.18 + (noiseB - 0.5) * 0.22;
+
+        const nextLen = len * (0.78 + (noiseA - 0.5) * 0.04);
+        const sideLen = len * (0.60 + (noiseB - 0.5) * 0.06);
+        const tertiaryLen = len * 0.46;
+
+        grow(nx, ny, chosenAngle, nextLen, depth + 1, branchId * 3 + 1, true);
+        grow(nx, ny, siblingAngle, sideLen, depth + 1, branchId * 3 + 2, false);
+        if (depth >= 2) {
+          grow(nx, ny, tertiaryAngle, tertiaryLen, depth + 1, branchId * 3 + 3, false);
+        }
+      }
+
+      grow(0, 0, rootAngle, baseLen, 0, 1, true);
+      return { nodes, path };
+    }
+
+    function estimateComposition(fractal, viewpointPhase) {
+      const path = fractal.path;
+      const nodes = fractal.nodes;
+      if (!path.length) return { score: -1e9, phase: viewpointPhase };
+
+      const phaseValue = clamp(viewpointPhase, 0, 1);
+      const maxIndex = Math.max(0, path.length - 1);
+      const exactIndex = phaseValue * maxIndex;
+      const indexA = clamp(Math.floor(exactIndex), 0, maxIndex);
+      const indexB = clamp(indexA + 1, 0, maxIndex);
+      const mix = exactIndex - indexA;
+
+      const targetA = path[indexA];
+      const targetB = path[indexB] || targetA;
+      const prev = path[Math.max(0, indexA - 1)] || targetA;
+
+      const tx = targetA.x2 + (targetB.x2 - targetA.x2) * mix;
+      const ty = targetA.y2 + (targetB.y2 - targetA.y2) * mix;
+      const ta = targetA.angle + (targetB.angle - targetA.angle) * mix;
+      const tl = targetA.len + (targetB.len - targetA.len) * mix;
+      const targetDepth = targetA.depth + (targetB.depth - targetA.depth) * mix;
+
+      const prevAngle = Math.atan2(targetA.y2 - prev.y2, (targetA.x2 - prev.x2) || 0.0001);
+      const dirA = ta * 0.72 + prevAngle * 0.28;
+      const zoomValue = 2.2 + phaseValue * 3.6;
+      const lead = tl * (0.78 + phaseValue * 0.92);
+      const sideDrift = Math.sin(phaseValue * Math.PI * 2) * tl * 0.12;
+      const cameraX = tx + Math.cos(dirA) * lead + Math.cos(dirA + Math.PI / 2) * sideDrift;
+      const cameraY = ty + Math.sin(dirA) * lead + Math.sin(dirA + Math.PI / 2) * sideDrift;
+
+      let visible = 0;
+      let fine = 0;
+      let chosenVisible = 0;
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      let sumX = 0;
+      let sumY = 0;
+
+      for (const s of nodes) {
+        const sx1 = (s.x1 - cameraX) * zoomValue + width * 0.5;
+        const sy1 = (s.y1 - cameraY) * zoomValue + height * 0.54;
+        const sx2 = (s.x2 - cameraX) * zoomValue + width * 0.5;
+        const sy2 = (s.y2 - cameraY) * zoomValue + height * 0.54;
+
+        const inside = !(
+          (sx1 < -width * 0.2 && sx2 < -width * 0.2) ||
+          (sx1 > width * 1.2 && sx2 > width * 1.2) ||
+          (sy1 < -height * 0.2 && sy2 < -height * 0.2) ||
+          (sy1 > height * 1.2 && sy2 > height * 1.2)
+        );
+        if (!inside) continue;
+
+        visible += 1;
+        if (s.depth >= targetDepth - 1.5) fine += 1;
+        if (s.chosen) chosenVisible += 1;
+
+        minX = Math.min(minX, sx1, sx2);
+        maxX = Math.max(maxX, sx1, sx2);
+        minY = Math.min(minY, sy1, sy2);
+        maxY = Math.max(maxY, sy1, sy2);
+        sumX += (sx1 + sx2) * 0.5;
+        sumY += (sy1 + sy2) * 0.5;
+      }
+
+      if (visible === 0) return { score: -1e9, phase: viewpointPhase };
+
+      const spanX = maxX - minX;
+      const spanY = maxY - minY;
+      const coverageX = clamp(spanX / width, 0, 2);
+      const coverageY = clamp(spanY / height, 0, 2);
+      const coverageScore = 1 - Math.abs(coverageX - 0.62) - Math.abs(coverageY - 0.58);
+
+      const centerX = sumX / visible;
+      const centerY = sumY / visible;
+      const centerDx = Math.abs(centerX - width * 0.5) / width;
+      const centerDy = Math.abs(centerY - height * 0.5) / height;
+      const balanceScore = 1 - (centerDx * 1.2 + centerDy * 1.2);
+
+      const fineRatio = fine / visible;
+      const chosenRatio = chosenVisible / visible;
+      const densityScore = Math.min(1.4, visible / 90);
+      const fineScore = fineRatio * 2.2;
+      const pathScore = Math.min(1.0, chosenRatio * 3.0);
+
+      const score =
+        coverageScore * 2.4 +
+        balanceScore * 2.0 +
+        densityScore * 1.4 +
+        fineScore * 2.8 +
+        pathScore * 0.8;
+
+      return {
+        score,
+        phase: viewpointPhase,
+      };
+    }
+
+    function renderFractal(fractal, alpha, viewpointPhase, seedTime) {
+      const path = fractal.path;
+      const nodes = fractal.nodes;
+      if (!path.length) return;
+
+      const phaseValue = clamp(viewpointPhase, 0, 1);
+      const maxIndex = Math.max(0, path.length - 1);
+      const exactIndex = phaseValue * maxIndex;
+      const indexA = clamp(Math.floor(exactIndex), 0, maxIndex);
+      const indexB = clamp(indexA + 1, 0, maxIndex);
+      const mix = exactIndex - indexA;
+
+      const targetA = path[indexA];
+      const targetB = path[indexB] || targetA;
+      const prev = path[Math.max(0, indexA - 1)] || targetA;
+
+      const tx = targetA.x2 + (targetB.x2 - targetA.x2) * mix;
+      const ty = targetA.y2 + (targetB.y2 - targetA.y2) * mix;
+      const ta = targetA.angle + (targetB.angle - targetA.angle) * mix;
+      const tl = targetA.len + (targetB.len - targetA.len) * mix;
+      const targetDepth = targetA.depth + (targetB.depth - targetA.depth) * mix;
+
+      const prevAngle = Math.atan2(targetA.y2 - prev.y2, (targetA.x2 - prev.x2) || 0.0001);
+      const dirA = ta * 0.72 + prevAngle * 0.28;
+      const zoomValue = 2.2 + phaseValue * 3.6;
+      const lead = tl * (0.78 + phaseValue * 0.92);
+      const sideDrift = Math.sin(phaseValue * Math.PI * 2) * tl * 0.12;
+      const cameraX = tx + Math.cos(dirA) * lead + Math.cos(dirA + Math.PI / 2) * sideDrift;
+      const cameraY = ty + Math.sin(dirA) * lead + Math.sin(dirA + Math.PI / 2) * sideDrift;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.globalCompositeOperation = "source-over";
+      ctx.translate(width * 0.5, height * 0.54);
+      ctx.scale(zoomValue, zoomValue);
+      ctx.translate(-cameraX, -cameraY);
+
+      for (const s of nodes) {
+        const pathDistance = s.chosen
+          ? Math.abs(s.depth - targetDepth)
+          : Math.abs(s.depth - targetDepth) + 0.9;
+        const proximity = Math.max(0, 1 - pathDistance / 2.6);
+        const a = { x: s.x1, y: s.y1 };
+        const b = { x: s.x2, y: s.y2 };
+
+        drawSegment(a, b, (5.8 * proximity + 0.8) * dpr / zoomValue, palette.glow);
+        drawSegment(
+          a,
+          b,
+          (s.chosen ? 1.45 + proximity * 1.1 : 0.72 + proximity * 0.45) * dpr / zoomValue,
+          branchColor(s.branchId, s.chosen, s.depth, 1)
+        );
+
+        if (!s.chosen && s.depth >= targetDepth - 2) {
+          const miniCount = s.depth < 8 ? 1 : 2;
+          for (let k = 0; k < miniCount; k++) {
+            const sign = k === 0 ? -1 : 1;
+            const aa = s.angle + sign * (0.48 + 0.12 * Math.sin(seedTime * 0.2 + s.depth + k));
+            const ll = s.len * (0.42 - k * 0.08);
+            const bx = s.x2 + Math.cos(aa) * ll;
+            const by = s.y2 + Math.sin(aa) * ll;
+            drawSegment(
+              { x: s.x2, y: s.y2 },
+              { x: bx, y: by },
+              (0.42 + proximity * 0.22) * dpr / zoomValue,
+              branchColor(s.branchId * 13 + k + 1, false, s.depth + 1, 1)
+            );
+          }
+        }
+      }
+
+      ctx.restore();
+    }
+
+    function selectBestView(fractal, preferredPhases) {
+      let best = null;
+      for (const phase of preferredPhases) {
+        const candidate = estimateComposition(fractal, phase);
+        if (!best || candidate.score > best.score) {
+          best = candidate;
+        }
+      }
+      return best || { phase: preferredPhases[0] || 0.9, score: -1e9 };
+    }
+
+    function drawScene(seedTime) {
+      const preferredPhases = [0.76, 0.80, 0.84, 0.88, 0.91, 0.94, 0.965, 0.985];
+      const cutHold = 7.0;
+      const cutFade = 3.0;
+      const cutSpan = cutHold + cutFade;
+
+      const cutIndex = Math.floor(seedTime / cutSpan);
+      const cutLocal = seedTime % cutSpan;
+      const fadeProgress = cutLocal < cutHold ? 0 : smoothstep((cutLocal - cutHold) / cutFade);
+
+      const currentSeed = 84.0 + cutIndex * 7.137;
+      const nextSeed = 84.0 + (cutIndex + 1) * 7.137;
+
+      const currentFractal = buildFractal(currentSeed);
+      const nextFractal = buildFractal(nextSeed);
+
+      const currentBest = selectBestView(currentFractal, preferredPhases);
+      const nextBest = selectBestView(nextFractal, preferredPhases);
+
+      renderFractal(currentFractal, 1 - fadeProgress, currentBest.phase, currentSeed);
+      renderFractal(nextFractal, fadeProgress, nextBest.phase, nextSeed);
+    }
+
+    function draw(now = 0) {
+      clearFrame();
+      drawScene(now * 0.001);
+      requestAnimationFrame(draw);
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.().catch(() => {});
+      } else {
+        document.exitFullscreen?.().catch(() => {});
+      }
+    }
+
+    function updateColorFromPointer(clientX, clientY) {
+      const nx = clamp(clientX / Math.max(1, window.innerWidth), 0, 1);
+      const ny = clamp(clientY / Math.max(1, window.innerHeight), 0, 1);
+      colorHue = nx * 360;
+      colorSat = 28 + (1 - ny) * 72;
+      updatePaletteFromHue();
+    }
+
+    function handleTap() {
+      const now = performance.now();
+      const delta = now - lastTap;
+      lastTap = now;
+      hint.classList.add("hidden");
+      if (delta < 280) {
+        toggleFullscreen();
+      }
+    }
+
+    window.addEventListener("pointerdown", (event) => {
+      updateColorFromPointer(event.clientX, event.clientY);
+    });
+
+    window.addEventListener("pointermove", (event) => {
+      if (event.buttons === 0) return;
+      updateColorFromPointer(event.clientX, event.clientY);
+    });
+
+    window.addEventListener("resize", resize);
+    window.addEventListener("orientationchange", resize);
+    window.addEventListener("click", handleTap);
+    window.addEventListener(
+      "touchstart",
+      () => {
+        hint.classList.add("hidden");
+      },
+      { passive: true }
+    );
+
+    updatePaletteFromHue();
+    resize();
+    requestAnimationFrame(draw);
+  </script>
+</body>
+</html>
