@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Into Finer Silence</title>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      touch-action: manipulation;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100dvh;
+      background: #000000;
+    }
+
+    .hint {
+      position: fixed;
+      left: 16px;
+      bottom: 14px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      pointer-events: none;
+      user-select: none;
+      transition: opacity 600ms ease;
+    }
+
+    .hint.hidden {
+      opacity: 0;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div class="hint" id="hint">double tap: fullscreen</div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hint = document.getElementById('hint');
+
+    let width = 0;
+    let height = 0;
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let lastTap = 0;
+
+    const palette = {
+      bg: '#000000',
+      trunk: 'rgba(255, 255, 255, 0.26)',
+      side: 'rgba(255, 255, 255, 0.14)',
+      glow: 'rgba(255, 255, 255, 0.05)'
+    };
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = Math.floor(window.innerWidth * dpr);
+      height = Math.floor(window.innerHeight * dpr);
+      canvas.width = width;
+      canvas.height = height;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+    }
+
+    function clearFrame() {
+      ctx.fillStyle = palette.bg;
+      ctx.fillRect(0, 0, width, height);
+    }
+
+    function drawSegment(a, b, lineWidth, color) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function smoothstep(t) {
+      const x = clamp(t, 0, 1);
+      return x * x * (3 - 2 * x);
+    }
+
+    function hash01(v) {
+      return 0.5 + 0.5 * Math.sin(v * 127.1 + Math.cos(v * 311.7) * 13.7);
+    }
+
+    function buildFractal(seedTime) {
+      const nodes = [];
+      const path = [];
+      const maxDepth = 10;
+      const baseLen = Math.min(width, height) * 0.11;
+      const rootAngle = -Math.PI / 2 + Math.sin(seedTime * 0.045) * 0.16;
+
+      function grow(x, y, angle, len, depth, branchId, chosen) {
+        if (depth > maxDepth || len < 1.2) return;
+
+        const bend = Math.sin(seedTime * 0.18 + branchId * 0.73 + depth * 0.41) * 0.22;
+        const segAngle = angle + bend;
+        const nx = x + Math.cos(segAngle) * len;
+        const ny = y + Math.sin(segAngle) * len;
+
+        const node = {
+          x1: x,
+          y1: y,
+          x2: nx,
+          y2: ny,
+          angle: segAngle,
+          len,
+          depth,
+          chosen
+        };
+
+        nodes.push(node);
+        if (chosen) path.push(node);
+
+        const baseSpread = 0.40 + Math.sin(seedTime * 0.14 + depth * 0.8 + branchId) * 0.12;
+        const noiseA = hash01(branchId * 1.17 + depth * 2.31 + seedTime * 0.05);
+        const noiseB = hash01(branchId * 1.91 + depth * 1.73 + 3.1 + seedTime * 0.045);
+        const preferredSign = noiseA > 0.5 ? 1 : -1;
+
+        const chosenAngle = segAngle + preferredSign * (baseSpread + noiseB * 0.25);
+        const siblingAngle = segAngle - preferredSign * (baseSpread * 0.85 + noiseA * 0.18);
+        const tertiaryAngle = segAngle + preferredSign * 0.18 + (noiseB - 0.5) * 0.22;
+
+        const nextLen = len * (0.78 + (noiseA - 0.5) * 0.04);
+        const sideLen = len * (0.60 + (noiseB - 0.5) * 0.06);
+        const tertiaryLen = len * 0.46;
+
+        grow(nx, ny, chosenAngle, nextLen, depth + 1, branchId * 3 + 1, true);
+        grow(nx, ny, siblingAngle, sideLen, depth + 1, branchId * 3 + 2, false);
+        if (depth >= 2) {
+          grow(nx, ny, tertiaryAngle, tertiaryLen, depth + 1, branchId * 3 + 3, false);
+        }
+      }
+
+      grow(0, 0, rootAngle, baseLen, 0, 1, true);
+      return { nodes, path };
+    }
+
+    function renderFractal(fractal, alpha, viewpointPhase, seedTime) {
+      const path = fractal.path;
+      const nodes = fractal.nodes;
+      if (!path.length) return;
+
+      const phaseValue = clamp(viewpointPhase, 0, 1);
+      const maxIndex = Math.max(0, path.length - 1);
+      const exactIndex = phaseValue * maxIndex;
+      const indexA = clamp(Math.floor(exactIndex), 0, maxIndex);
+      const indexB = clamp(indexA + 1, 0, maxIndex);
+      const mix = exactIndex - indexA;
+
+      const targetA = path[indexA];
+      const targetB = path[indexB] || targetA;
+      const prev = path[Math.max(0, indexA - 1)] || targetA;
+
+      const tx = targetA.x2 + (targetB.x2 - targetA.x2) * mix;
+      const ty = targetA.y2 + (targetB.y2 - targetA.y2) * mix;
+      const ta = targetA.angle + (targetB.angle - targetA.angle) * mix;
+      const tl = targetA.len + (targetB.len - targetA.len) * mix;
+      const targetDepth = targetA.depth + (targetB.depth - targetA.depth) * mix;
+
+      const prevAngle = Math.atan2(targetA.y2 - prev.y2, (targetA.x2 - prev.x2) || 0.0001);
+      const dirA = ta * 0.72 + prevAngle * 0.28;
+      const zoomValue = 2.0 + phaseValue * 4.7;
+      const lead = tl * (0.55 + phaseValue * 0.95);
+      const sideDrift = Math.sin(phaseValue * Math.PI * 2) * tl * 0.18;
+      const cameraX = tx + Math.cos(dirA) * lead + Math.cos(dirA + Math.PI / 2) * sideDrift;
+      const cameraY = ty + Math.sin(dirA) * lead + Math.sin(dirA + Math.PI / 2) * sideDrift;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.translate(width * 0.5, height * 0.54);
+      ctx.scale(zoomValue, zoomValue);
+      ctx.translate(-cameraX, -cameraY);
+
+      for (const s of nodes) {
+        const pathDistance = s.chosen
+          ? Math.abs(s.depth - targetDepth)
+          : Math.abs(s.depth - targetDepth) + 0.9;
+        const proximity = Math.max(0, 1 - pathDistance / 2.6);
+        const a = { x: s.x1, y: s.y1 };
+        const b = { x: s.x2, y: s.y2 };
+
+        drawSegment(a, b, (5.8 * proximity + 0.8) * dpr / zoomValue, palette.glow);
+        drawSegment(
+          a,
+          b,
+          (s.chosen ? 1.45 + proximity * 1.1 : 0.72 + proximity * 0.45) * dpr / zoomValue,
+          s.chosen ? palette.trunk : palette.side
+        );
+
+        if (!s.chosen && s.depth >= targetDepth - 2) {
+          const miniCount = s.depth < 8 ? 1 : 2;
+          for (let k = 0; k < miniCount; k++) {
+            const sign = k === 0 ? -1 : 1;
+            const aa = s.angle + sign * (0.48 + 0.12 * Math.sin(seedTime * 0.2 + s.depth + k));
+            const ll = s.len * (0.42 - k * 0.08);
+            const bx = s.x2 + Math.cos(aa) * ll;
+            const by = s.y2 + Math.sin(aa) * ll;
+            drawSegment(
+              { x: s.x2, y: s.y2 },
+              { x: bx, y: by },
+              (0.42 + proximity * 0.22) * dpr / zoomValue,
+              palette.side
+            );
+          }
+        }
+      }
+
+      ctx.restore();
+    }
+
+    function drawScene(seedTime) {
+      const hold = 8.2;
+      const fade = 5.0;
+      const span = hold + fade;
+      const sceneIndex = Math.floor(seedTime / span);
+      const local = seedTime % span;
+      const blendT = local < hold ? 0 : (local - hold) / fade;
+      const eased = smoothstep(blendT);
+
+      const currentSeed = 84.0 + sceneIndex * 7.137;
+      const nextSeed = 84.0 + (sceneIndex + 1) * 7.137;
+
+      const currentFractal = buildFractal(currentSeed);
+      const nextFractal = buildFractal(nextSeed);
+
+      const smallBranchViews = [0.78, 0.84, 0.89, 0.93, 0.96, 0.985];
+      const currentView = smallBranchViews[sceneIndex % smallBranchViews.length];
+      const nextView = smallBranchViews[(sceneIndex + 1) % smallBranchViews.length];
+
+      if (local < hold) {
+        renderFractal(currentFractal, 1, currentView, currentSeed);
+      } else {
+        renderFractal(currentFractal, 1 - eased, currentView, currentSeed);
+        renderFractal(nextFractal, eased, nextView, nextSeed);
+      }
+    }
+
+    function draw(now = 0) {
+      const t = now * 0.001;
+      clearFrame();
+      drawScene(t);
+      requestAnimationFrame(draw);
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.().catch(() => {});
+      } else {
+        document.exitFullscreen?.().catch(() => {});
+      }
+    }
+
+    function handleTap() {
+      const now = performance.now();
+      const delta = now - lastTap;
+      lastTap = now;
+      hint.classList.add('hidden');
+
+      if (delta < 280) {
+        toggleFullscreen();
+      }
+    }
+
+    window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', resize);
+    window.addEventListener('click', handleTap);
+    window.addEventListener('touchstart', () => {
+      hint.classList.add('hidden');
+    }, { passive: true });
+
+    resize();
+    requestAnimationFrame(draw);
+  </script>
+</body>
+</html>
