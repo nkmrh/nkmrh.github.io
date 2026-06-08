@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Liquid Sky</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      touch-action: none;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100dvh;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const gl = canvas.getContext('webgl');
+
+    // ---- 浮動小数テクスチャの確保（波シミュレーションに必要） ----
+    const extLinear = gl.getExtension('OES_texture_float_linear')
+                   || gl.getExtension('OES_texture_half_float_linear');
+    let texType = gl.UNSIGNED_BYTE;
+    if (gl.getExtension('OES_texture_float')) {
+      texType = gl.FLOAT;
+    } else {
+      const hf = gl.getExtension('OES_texture_half_float');
+      if (hf) texType = hf.HALF_FLOAT_OES;
+    }
+    const filter = extLinear ? gl.LINEAR : gl.NEAREST;
+
+    let width, height;          // 表示（canvas）解像度
+    let simW, simH;             // シミュレーション解像度
+
+    // ---- シェーダ共通 ----
+    const vert = `
+      attribute vec2 a_position;
+      varying vec2 v_uv;
+      void main() {
+        v_uv = a_position * 0.5 + 0.5;
+        gl_Position = vec4(a_position, 0.0, 1.0);
+      }
+    `;
+
+    // ---- 波のシミュレーション（高さ場の更新） ----
+    // R: 現在の高さ / G: 1ステップ前の高さ
+    const simFrag = `
+      precision highp float;
+      varying vec2 v_uv;
+      uniform sampler2D u_prev;
+      uniform vec2 u_texel;
+      uniform float u_aspect;
+      uniform vec2 u_injPos[4];
+      uniform float u_injAmt[4];
+
+      void main() {
+        vec2 d = texture2D(u_prev, v_uv).rg;
+        float h     = d.r;   // 現在
+        float hPrev = d.g;   // 前回
+
+        // 上下左右の高さ
+        float L = texture2D(u_prev, v_uv - vec2(u_texel.x, 0.0)).r;
+        float R = texture2D(u_prev, v_uv + vec2(u_texel.x, 0.0)).r;
+        float U = texture2D(u_prev, v_uv + vec2(0.0, u_texel.y)).r;
+        float D = texture2D(u_prev, v_uv - vec2(0.0, u_texel.y)).r;
+
+        // 波動方程式（離散）＋ 減衰
+        float newH = (L + R + U + D) * 0.5 - hPrev;
+        newH *= 0.992;
+
+        // 外乱の注入（ドラッグ・雨だれ）
+        for (int i = 0; i < 4; i++) {
+          vec2 dd = (v_uv - u_injPos[i]);
+          dd.x *= u_aspect;
+          float g = exp(-dot(dd, dd) * 700.0);
+          newH += g * u_injAmt[i];
+        }
+
+        gl_FragColor = vec4(newH, h, 0.0, 1.0);
+      }
+    `;
+
+    // ---- 描画（反射＋屈折＋コースティクス） ----
+    const renderFrag = `
+      precision highp float;
+      varying vec2 v_uv;
+      uniform sampler2D u_height;
+      uniform vec2 u_texel;
+      uniform vec2 u_resolution;
+      uniform float u_time;
+
+      // ---- 値ノイズ / fbm（雲の生成用） ----
+      float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+      }
+      float noise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        float a = hash(i);
+        float b = hash(i + vec2(1.0, 0.0));
+        float c = hash(i + vec2(0.0, 1.0));
+        float d = hash(i + vec2(1.0, 1.0));
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+      }
+      float fbm(vec2 p) {
+        float v = 0.0, a = 0.5;
+        for (int i = 0; i < 5; i++) {
+          v += a * noise(p);
+          p *= 2.02;
+          a *= 0.5;
+        }
+        return v;
+      }
+
+      // 雲の混じった青空の環境マップ
+      // r        : 反射方向
+      // worldPos : 水面上の位置（雲を空間に貼り付けるため）
+      vec3 envSky(vec3 r, vec2 worldPos, float time) {
+        // 空のグラデーション（天頂は濃い青、地平は淡い水色）
+        float up = clamp(r.z, 0.0, 1.0);
+        vec3 zenith  = vec3(0.18, 0.42, 0.82);
+        vec3 horizon = vec3(0.72, 0.84, 0.95);
+        vec3 sky = mix(horizon, zenith, smoothstep(0.0, 1.0, up));
+
+        // 太陽
+        vec3 sunDir = normalize(vec3(-0.35, 0.25, 0.80));
+        vec3 rn = normalize(r);
+        float sun  = pow(max(0.0, dot(rn, sunDir)), 350.0);
+        float glow = pow(max(0.0, dot(rn, sunDir)), 6.0);
+        sky += vec3(1.00, 0.96, 0.85) * sun * 2.0;
+        sky += vec3(1.00, 0.90, 0.72) * glow * 0.25;
+
+        // 雲：水面位置に貼り付けつつ、反射方向で歪ませる
+        vec2 cuv = worldPos * 1.1 + r.xy * 2.5 + vec2(time * 0.015, time * 0.008);
+        float n = fbm(cuv * 1.8);
+        float clouds = smoothstep(0.50, 0.95, n);
+        // 雲の陰影（厚みのある所はやや暗く）
+        vec3 cloudCol = mix(vec3(1.0), vec3(0.80, 0.83, 0.90), smoothstep(0.5, 1.0, n));
+        sky = mix(sky, cloudCol, clouds * 0.9);
+
+        return sky;
+      }
+
+      // ボロノイ（細胞ノイズ）: x=最寄り距離, y=セル固有値, z=境界までの距離
+      vec3 voronoi(vec2 p) {
+        vec2 ip = floor(p), fp = fract(p);
+        float f1 = 8.0, f2 = 8.0;
+        vec2 id = vec2(0.0);
+        for (int j = -1; j <= 1; j++) {
+          for (int i = -1; i <= 1; i++) {
+            vec2 g = vec2(float(i), float(j));
+            vec2 o = g + vec2(hash(ip + g), hash(ip + g + vec2(31.0, 17.0))) - fp;
+            float d = dot(o, o);
+            if (d < f1) { f2 = f1; f1 = d; id = ip + g; }
+            else if (d < f2) { f2 = d; }
+          }
+        }
+        return vec3(sqrt(f1), hash(id), sqrt(f2) - sqrt(f1));
+      }
+
+      // 水底のシーン（砂・砂利・岩・水草）。水の色は後で深さに応じてかける
+      vec3 floorColor(vec2 uv, float time, float aspect) {
+        // やわらかい色ムラだけのシンプルな砂底
+        float sand = 0.5 + 0.5 * fbm(uv * 6.0 + 13.0);
+        vec3 col = mix(vec3(0.34, 0.42, 0.38), vec3(0.66, 0.70, 0.64), sand);
+        return col;
+      }
+
+      void main() {
+        // 高さ場から法線を求める
+        float h  = texture2D(u_height, v_uv).r;
+        float L  = texture2D(u_height, v_uv - vec2(u_texel.x, 0.0)).r;
+        float Rr = texture2D(u_height, v_uv + vec2(u_texel.x, 0.0)).r;
+        float D  = texture2D(u_height, v_uv - vec2(0.0, u_texel.y)).r;
+        float U  = texture2D(u_height, v_uv + vec2(0.0, u_texel.y)).r;
+
+        vec3 norm = normalize(vec3((L - Rr) * 6.0, (D - U) * 6.0, 1.0));
+
+        // 水面上の位置（雲の貼り付け用）
+        vec2 worldPos = (gl_FragCoord.xy - u_resolution * 0.5) / min(u_resolution.x, u_resolution.y);
+
+        // 常時うっすら揺れる環境波（最初から画面全体を水面に見せる）
+        vec2 amb = vec2(
+          sin(worldPos.x * 6.0 + u_time * 0.7) + 0.6 * sin(worldPos.y * 9.0 - u_time * 0.5),
+          cos(worldPos.y * 6.5 - u_time * 0.6) + 0.6 * sin(worldPos.x * 8.0 + u_time * 0.45)
+        );
+        norm = normalize(norm + vec3(amb * 0.035, 0.0));
+
+        // ---- 反射（青空＋雲の環境マップ） ----
+        vec3 view = vec3(0.0, 0.0, -1.0);
+        vec3 ref  = reflect(view, norm);
+        vec3 reflCol = envSky(ref, worldPos, u_time);
+
+        // ---- 水の深さ（場所ごとに変化 → 立体的な透明感） ----
+        float depth = 0.10
+                    + 0.30 * smoothstep(0.0, 1.5, length(worldPos))   // 外側ほど深い
+                    + 0.20 * fbm(worldPos * 1.4 + 5.0);               // 底の起伏
+
+        // ---- 屈折（深いほど大きく揺らぐ） ----
+        vec2 refrUV = v_uv + norm.xy * (0.04 + depth * 0.10);
+        float aspect = u_resolution.x / u_resolution.y;
+        vec3 bottom = floorColor(refrUV, u_time, aspect);
+
+        // ---- コースティクス（光の収束 = ラプラシアン） ----
+        float lap = (L + Rr + U + D - 4.0 * h);
+        float caustic = pow(max(0.0, lap * 26.0), 1.4);
+        bottom += vec3(0.6, 0.95, 1.0) * caustic * 1.3;
+        bottom *= 1.0 + max(0.0, -lap * 10.0) * 0.4;   // 谷側の影で網目をくっきり
+
+        // ---- Beer-Lambert 吸収（赤→緑→青の順に消え、青緑に透ける） ----
+        vec3 absorb = vec3(1.3, 0.32, 0.12);
+        vec3 trans  = exp(-depth * absorb * 1.0);       // 透過率（澄んだ水＝弱い吸収）
+        vec3 scatter = vec3(0.06, 0.38, 0.46);          // 水中の散乱色
+        vec3 refrCol = bottom * trans + scatter * (1.0 - trans);
+
+        // ---- フレネルで反射と屈折を合成 ----
+        float fres = pow(1.0 - max(0.0, norm.z), 3.0);
+        fres = mix(0.12, 1.0, fres);   // 真上はほぼ水底が透け、斜めだけ空が映る
+        vec3 col = mix(refrCol, reflCol, fres);
+
+        // ---- スペキュラー（太陽のきらめき） ----
+        vec3 lightDir = normalize(vec3(-0.35, 0.25, 0.80));
+        vec3 H = normalize(vec3(0.0, 0.0, 1.0) + lightDir);
+        float nh = max(0.0, dot(norm, H));
+        // 広めの照り返し
+        col += vec3(1.0, 0.97, 0.90) * pow(nh, 90.0) * 2.0;
+        // 鋭いきらめき（細かな波頭で点々と光る）
+        col += vec3(1.0, 0.99, 0.95) * pow(nh, 400.0) * 5.0;
+        // さらに細かいスパークル
+        col += vec3(1.0) * pow(nh, 1200.0) * 8.0;
+
+        // ---- 薄膜干渉の虹色 ----
+        float hueAngle = atan(ref.y, ref.x);
+        vec3 irid = 0.5 + 0.5 * cos(hueAngle * 2.0 + vec3(0.0, 2.094, 4.189));
+        col += irid * (0.05 + fres * 0.15);
+
+        gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+      }
+    `;
+
+    function compile(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(s));
+      }
+      return s;
+    }
+    function makeProgram(fragSrc) {
+      const p = gl.createProgram();
+      gl.attachShader(p, compile(gl.VERTEX_SHADER, vert));
+      gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fragSrc));
+      gl.linkProgram(p);
+      return p;
+    }
+
+    const simProg    = makeProgram(simFrag);
+    const renderProg = makeProgram(renderFrag);
+
+    // フルスクリーン三角形（2枚）
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1,-1, 1,-1, -1,1,  -1,1, 1,-1, 1,1
+    ]), gl.STATIC_DRAW);
+
+    function bindPosition(prog) {
+      const loc = gl.getAttribLocation(prog, 'a_position');
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    }
+
+    // ---- ping-pong 用テクスチャ＋FBO ----
+    let texA, texB, fboA, fboB;
+
+    function makeTex(w, h) {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, texType, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      return t;
+    }
+    function makeFbo(tex) {
+      const f = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      return f;
+    }
+
+    function allocSim() {
+      // 大きすぎると重いので最大辺を制限
+      const maxDim = 640;
+      const aspect = width / height;
+      if (aspect >= 1) { simW = maxDim; simH = Math.round(maxDim / aspect); }
+      else             { simH = maxDim; simW = Math.round(maxDim * aspect); }
+
+      texA = makeTex(simW, simH);
+      texB = makeTex(simW, simH);
+      fboA = makeFbo(texA);
+      fboB = makeFbo(texB);
+
+      // 0 で初期化
+      for (const f of [fboA, fboB]) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth * dpr;
+      height = window.innerHeight * dpr;
+      canvas.width = width;
+      canvas.height = height;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      allocSim();
+    }
+
+    // ---- uniform 位置 ----
+    const sim = {
+      prev:   gl.getUniformLocation(simProg, 'u_prev'),
+      texel:  gl.getUniformLocation(simProg, 'u_texel'),
+      aspect: gl.getUniformLocation(simProg, 'u_aspect'),
+      injPos: gl.getUniformLocation(simProg, 'u_injPos'),
+      injAmt: gl.getUniformLocation(simProg, 'u_injAmt'),
+    };
+    const ren = {
+      height: gl.getUniformLocation(renderProg, 'u_height'),
+      texel:  gl.getUniformLocation(renderProg, 'u_texel'),
+      res:    gl.getUniformLocation(renderProg, 'u_resolution'),
+      time:   gl.getUniformLocation(renderProg, 'u_time'),
+    };
+
+    // ---- 入力（ドラッグ） ----
+    let dragging = false;
+    let dragUV = [0.5, 0.5];
+
+    function setDrag(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      dragUV = [
+        (clientX - rect.left) / rect.width,
+        1.0 - (clientY - rect.top) / rect.height   // WebGL は下が原点
+      ];
+    }
+    canvas.addEventListener('pointerdown', (e) => { dragging = true; setDrag(e.clientX, e.clientY); });
+    canvas.addEventListener('pointermove', (e) => { if (dragging) setDrag(e.clientX, e.clientY); });
+    canvas.addEventListener('pointerup',   () => { dragging = false; });
+    canvas.addEventListener('pointercancel', () => { dragging = false; });
+
+    // ダブルタップで全画面
+    async function toggleFullscreen() {
+      try {
+        if (!document.fullscreenElement) await canvas.requestFullscreen();
+        else await document.exitFullscreen();
+      } catch (e) {}
+    }
+    let lastTap = 0;
+    canvas.addEventListener('click', () => {
+      const now = performance.now();
+      if (now - lastTap < 280) toggleFullscreen();
+      lastTap = now;
+    });
+
+    window.addEventListener('resize', resize);
+
+    function buildInjects(now) {
+      const pos = [0,0, 0,0, 0,0, 0,0];
+      const amt = [0, 0, 0, 0];
+
+      // slot0: ドラッグ
+      if (dragging) {
+        pos[0] = dragUV[0]; pos[1] = dragUV[1];
+        amt[0] = 0.05;
+      }
+
+      return { pos, amt };
+    }
+
+    let src = () => ({ tex: texA, fbo: fboB }); // 読み: texA → 書き: fboB
+    let readTex = null, writeFbo = null, writeTex = null;
+
+    function step(now) {
+      // --- シミュレーション更新 ---
+      gl.bindFramebuffer(gl.FRAMEBUFFER, writeFbo);
+      gl.viewport(0, 0, simW, simH);
+      gl.useProgram(simProg);
+      bindPosition(simProg);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, readTex);
+      gl.uniform1i(sim.prev, 0);
+      gl.uniform2f(sim.texel, 1 / simW, 1 / simH);
+      gl.uniform1f(sim.aspect, simW / simH);
+
+      const inj = buildInjects(now);
+      gl.uniform2fv(sim.injPos, inj.pos);
+      gl.uniform1fv(sim.injAmt, inj.amt);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+      // --- 画面へ描画 ---
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, width, height);
+      gl.useProgram(renderProg);
+      bindPosition(renderProg);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, writeTex);   // 更新後の高さ場
+      gl.uniform1i(ren.height, 0);
+      gl.uniform2f(ren.texel, 1 / simW, 1 / simH);
+      gl.uniform2f(ren.res, width, height);
+      gl.uniform1f(ren.time, now * 0.001);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    let flip = false;
+    function animate(now) {
+      // ping-pong の読み書きを入れ替え
+      if (!flip) { readTex = texA; writeFbo = fboB; writeTex = texB; }
+      else       { readTex = texB; writeFbo = fboA; writeTex = texA; }
+      flip = !flip;
+
+      step(now);
+      requestAnimationFrame(animate);
+    }
+
+    resize();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
