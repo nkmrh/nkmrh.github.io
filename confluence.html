@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Confluence</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #f4f3ee; touch-action: none; }
+    canvas { display: block; width: 100vw; height: 100dvh; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script>
+  (function () {
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+
+    // ===== パラメータ（静かなアンビエント向け）=====
+    const P = {
+      target: 2400,
+      substeps: 2,
+      grav: 0.02,         // ほぼ無重力でゆっくり漂う
+      k: 0.50,
+      kNear: 1.80,        // 非圧縮（画面を満たす）
+      visc: 0.30,         // 高粘性でとろりと
+      restBias: 0.44,     // 過充填で容器を満たす
+      wallDamp: 0.30,
+      waterGrav: 1.00,    // わずかな重さの差でゆるく層に
+      oilGrav: 0.60,
+      cohesion: 0.05,     // 弱めの凝集
+      interface: 0.05,    // 弱めの界面（柔らかく混ざる）
+      current: 0.003,     // 自律的なゆるい流れ
+      blobSize: 3.60,     // 大きくふんわり
+      sizeVar: 0.40,
+      softness: 0.78,     // ぼかして滑らかに
+      opacity: 0.50,      // 半透明で重ねて溶かす
+      stirRadius: 5.5,
+      stirStrength: 0.45
+    };
+
+    // 淡くくすんだ調和二色
+    function hslToRgb(hh, s, l) {
+      hh /= 360;
+      const f = (p, q, t) => {
+        if (t < 0) t += 1; if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+      };
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      return [Math.round(f(p,q,hh+1/3)*255), Math.round(f(p,q,hh)*255), Math.round(f(p,q,hh-1/3)*255)];
+    }
+    function pickColors() {
+      const h1 = Math.random() * 360;
+      const offs = [30, 45, 60, 90, 150];
+      const off = offs[Math.floor(Math.random() * offs.length)] * (Math.random() < 0.5 ? 1 : -1);
+      const s = 0.38 + Math.random() * 0.20;   // やや低彩度＝くすんだ色
+      return { water: hslToRgb(h1, s, 0.54), oil: hslToRgb((h1 + off + 360) % 360, s, 0.58) };
+    }
+    let COLOR = pickColors();
+    function gravOf(p) { return p.phase === 'water' ? P.waterGrav : P.oilGrav; }
+
+    let W, H, dpr, time = 0;
+    let h, hsq, spacing, rho0 = 0, rho0base = 0;
+    let parts = [];
+    let grid, gw, gh;
+
+    function makeBlob(rgb) {
+      const s = 128, cv = document.createElement('canvas');
+      cv.width = cv.height = s;
+      const g = cv.getContext('2d');
+      const grd = g.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+      const c = rgb.join(',');
+      const core = (1 - P.softness) * 0.96;
+      grd.addColorStop(0.0, 'rgba(' + c + ',1)');
+      grd.addColorStop(core, 'rgba(' + c + ',1)');
+      grd.addColorStop(1.0, 'rgba(' + c + ',0)');
+      g.fillStyle = grd; g.fillRect(0, 0, s, s);
+      return cv;
+    }
+    let blobWater, blobOil;
+    function rebuildBlobs() { blobWater = makeBlob(COLOR.water); blobOil = makeBlob(COLOR.oil); }
+
+    function initParticles() {
+      parts = [];
+      spacing = Math.max(8, Math.sqrt(W * H / P.target));
+      h = spacing * 1.7; hsq = h * h;
+      for (let y = spacing * 0.5; y < H - spacing * 0.5; y += spacing) {
+        for (let x = spacing * 0.5; x < W - spacing * 0.5; x += spacing) {
+          const phase = (y > H * 0.45) ? 'water' : 'oil';   // 水を少し多めに
+          parts.push({ x: x + (Math.random()-0.5)*spacing*0.4, y: y + (Math.random()-0.5)*spacing*0.4,
+                       px: 0, py: 0, vx: 0, vy: 0, phase: phase, rnd: Math.random() });
+        }
+      }
+      rebuildBlobs();
+      buildGrid();
+      let sum = 0; for (const p of parts) sum += density(p);
+      rho0base = sum / parts.length; rho0 = rho0base * P.restBias;
+    }
+
+    function buildGrid() {
+      gw = Math.max(1, Math.ceil(W / h)); gh = Math.max(1, Math.ceil(H / h));
+      grid = new Array(gw * gh);
+      for (let i = 0; i < grid.length; i++) grid[i] = [];
+      for (const p of parts) {
+        const gx = Math.min(gw-1, Math.max(0, Math.floor(p.x / h)));
+        const gy = Math.min(gh-1, Math.max(0, Math.floor(p.y / h)));
+        p.gx = gx; p.gy = gy; grid[gy * gw + gx].push(p);
+      }
+    }
+    function neighbors(p) {
+      const res = [];
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const gx = p.gx + dx, gy = p.gy + dy;
+        if (gx < 0 || gy < 0 || gx >= gw || gy >= gh) continue;
+        const cell = grid[gy * gw + gx];
+        for (let k = 0; k < cell.length; k++) res.push(cell[k]);
+      }
+      return res;
+    }
+    function density(p) {
+      let rho = 0;
+      const ns = neighbors(p);
+      for (const q of ns) {
+        const dx = q.x - p.x, dy = q.y - p.y, r2 = dx*dx + dy*dy;
+        if (r2 < hsq && r2 > 0.0001) { const qq = 1 - Math.sqrt(r2)/h; rho += qq*qq; }
+      }
+      return rho;
+    }
+
+    // 重力の向き（端末の傾きに連動）
+    let gravX = 0, gravY = 1;
+    function onOrient(e) {
+      if (e.beta == null || e.gamma == null) return;
+      const rad = Math.PI / 180;
+      gravX = Math.sin(e.gamma * rad); gravY = Math.sin(e.beta * rad);
+    }
+    let tiltReady = false;
+    function ensureTilt() {
+      if (tiltReady) return; tiltReady = true;
+      const DOE = window.DeviceOrientationEvent;
+      if (DOE && typeof DOE.requestPermission === 'function') {
+        DOE.requestPermission().then(s => { if (s === 'granted') window.addEventListener('deviceorientation', onOrient); }).catch(() => {});
+      } else if (DOE) window.addEventListener('deviceorientation', onOrient);
+    }
+
+    function simulate() {
+      for (const p of parts) {
+        const g = P.grav * gravOf(p);
+        p.vx += g * gravX; p.vy += g * gravY;
+        // 自律的なゆるい流れ
+        p.vx += Math.sin(p.y * 0.006 + time * 0.40) * P.current;
+        p.vy += Math.cos(p.x * 0.006 - time * 0.33) * P.current;
+      }
+      cohere();
+      applyViscosity();
+      for (const p of parts) { p.px = p.x; p.py = p.y; p.x += p.vx; p.y += p.vy; }
+      buildGrid();
+      doubleDensityRelax();
+      walls();
+      for (const p of parts) { p.vx = p.x - p.px; p.vy = p.y - p.py; }
+    }
+
+    function cohere() {
+      for (const p of parts) {
+        const ns = neighbors(p);
+        for (const q of ns) {
+          if (q === p) continue;
+          const dx = q.x - p.x, dy = q.y - p.y, r2 = dx*dx + dy*dy;
+          if (r2 >= hsq || r2 < 0.0001) continue;
+          const r = Math.sqrt(r2), w = 1 - r/h, nx = dx/r, ny = dy/r;
+          if (p.phase === q.phase) { const f = P.cohesion * w; p.vx += nx*f; p.vy += ny*f; }
+          else { const f = P.interface * w; p.vx -= nx*f; p.vy -= ny*f; }
+        }
+      }
+    }
+    function applyViscosity() {
+      for (const p of parts) {
+        const ns = neighbors(p);
+        for (const q of ns) {
+          if (q === p) continue;
+          const dx = q.x - p.x, dy = q.y - p.y, r2 = dx*dx + dy*dy;
+          if (r2 >= hsq || r2 < 0.0001) continue;
+          const r = Math.sqrt(r2), nx = dx/r, ny = dy/r;
+          const u = (p.vx - q.vx) * nx + (p.vy - q.vy) * ny;
+          if (u > 0) { const imp = P.visc * (1 - r/h) * u * 0.5; p.vx -= imp*nx; p.vy -= imp*ny; }
+        }
+      }
+    }
+    function doubleDensityRelax() {
+      for (const p of parts) {
+        let rho = 0, rhoNear = 0;
+        const ns = neighbors(p);
+        for (const q of ns) {
+          if (q === p) continue;
+          const dx = q.x - p.x, dy = q.y - p.y, r2 = dx*dx + dy*dy;
+          if (r2 >= hsq || r2 < 0.0001) continue;
+          const qq = 1 - Math.sqrt(r2)/h; rho += qq*qq; rhoNear += qq*qq*qq;
+        }
+        const ks = p.phase === 'water' ? 1.3 : 1.0;
+        const Pr = Math.max(0, P.k * ks * (rho - rho0));
+        const Pnear = P.kNear * ks * rhoNear;
+        let dxp = 0, dyp = 0;
+        for (const q of ns) {
+          if (q === p) continue;
+          const dx = q.x - p.x, dy = q.y - p.y, r2 = dx*dx + dy*dy;
+          if (r2 >= hsq || r2 < 0.0001) continue;
+          const r = Math.sqrt(r2), qq = 1 - r/h;
+          const D = (Pr * qq + Pnear * qq * qq) * 0.5, nx = dx/r, ny = dy/r;
+          q.x += D*nx; q.y += D*ny; dxp -= D*nx; dyp -= D*ny;
+        }
+        p.x += dxp; p.y += dyp;
+      }
+    }
+    function walls() {
+      const m = spacing * 0.5;
+      for (const p of parts) {
+        if (p.x < m) { p.x = m; p.vx *= -P.wallDamp; } else if (p.x > W - m) { p.x = W - m; p.vx *= -P.wallDamp; }
+        if (p.y < m) { p.y = m; p.vy *= -P.wallDamp; } else if (p.y > H - m) { p.y = H - m; p.vy *= -P.wallDamp; }
+      }
+    }
+
+    // かき混ぜ（やさしく）
+    let pointerDown = false, lastX = 0, lastY = 0;
+    function stir(x, y, dx, dy) {
+      const R = spacing * P.stirRadius, R2 = R * R;
+      for (const p of parts) {
+        const ex = p.x - x, ey = p.y - y, d2 = ex*ex + ey*ey;
+        if (d2 < R2) { const f = (1 - Math.sqrt(d2)/R) * P.stirStrength; p.vx += dx*f; p.vy += dy*f; }
+      }
+    }
+    canvas.addEventListener('pointerdown', (e) => { ensureTilt(); pointerDown = true; lastX = e.clientX; lastY = e.clientY; });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!pointerDown) return;
+      stir(e.clientX, e.clientY, e.clientX - lastX, e.clientY - lastY);
+      lastX = e.clientX; lastY = e.clientY;
+    });
+    canvas.addEventListener('pointerup', () => { pointerDown = false; });
+    canvas.addEventListener('pointercancel', () => { pointerDown = false; });
+
+    let lastTap = 0;
+    canvas.addEventListener('click', async () => {
+      const now = performance.now();
+      if (now - lastTap < 280) {
+        try { if (!document.fullscreenElement) await canvas.requestFullscreen(); else await document.exitFullscreen(); } catch (e) {}
+      }
+      lastTap = now;
+    });
+
+    function render() {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#f4f3ee';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(dpr, dpr);
+      const baseR = spacing * P.blobSize;
+      const sizeOf = (p) => baseR * Math.max(0.1, 1 + (p.rnd - 0.5) * 2 * P.sizeVar);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = P.opacity;
+      for (let pass = 0; pass < 2; pass++) {
+        const sprite = pass === 0 ? blobWater : blobOil;
+        const ph = pass === 0 ? 'water' : 'oil';
+        for (const p of parts) {
+          if (p.phase !== ph) continue;
+          const r = sizeOf(p);
+          ctx.drawImage(sprite, p.x - r, p.y - r, r * 2, r * 2);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function frame() {
+      time += 0.005;
+      const steps = Math.round(P.substeps);
+      for (let s = 0; s < steps; s++) simulate();
+      render();
+      requestAnimationFrame(frame);
+    }
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = window.innerWidth; H = window.innerHeight;
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+      initParticles();
+    }
+    window.addEventListener('resize', resize);
+
+    resize();
+    requestAnimationFrame(frame);
+  })();
+  </script>
+</body>
+</html>
