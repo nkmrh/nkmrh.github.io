@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Tunnel</title>
+  <style>
+    html, body {
+      margin: 0; width: 100%; height: 100%;
+      overflow: hidden; background: #000; touch-action: none;
+    }
+    canvas { display: block; width: 100vw; height: 100dvh; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const gl = canvas.getContext('webgl');
+
+    // ===== 調整可能パラメータ（白黒・オプアートのトンネルと金属球）=====
+    const P = {
+      speed: 0.20,     // 奥へ進む速さ
+      rot: 0.04,       // ゆっくりした回転
+      fold: 16.0,      // 周りの分割数（放射方向のセル）
+      bands: 3.00,     // 奥行き方向のセルの細かさ
+      wave: 0.0,       // オプアートのうねりの強さ（0＝素直なチェック柄）
+      twist: 0.0,      // 奥行きでねじれて螺旋になる強さ（0＝普通のチェック柄）
+      distort: 0.0,    // 球面の反射のゆがみ（0＝素直な鏡面）
+      contrast: 1.20,  // 明暗のコントラスト
+      vignette: 0.60,  // 周辺の暗さ
+      fade: 0.22,      // 中心（奥）が闇に沈む範囲
+      sway: 0.04,      // トンネルの揺らぎ
+      sphere: 0.0,     // 中央の金属球の大きさ（0＝球なし）
+      focal: 0.90      // 背景トンネルの画角
+    };
+
+    let width, height;
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth * dpr;
+      height = window.innerHeight * dpr;
+      canvas.width = width; canvas.height = height;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      gl.viewport(0, 0, width, height);
+    }
+
+    const vert = `
+      attribute vec2 a_position;
+      void main() { gl_Position = vec4(a_position, 0.0, 1.0); }
+    `;
+
+    const frag = `
+      precision highp float;
+      uniform vec2 u_res;
+      uniform float u_time;
+      uniform float u_speed, u_rot, u_fold, u_bands, u_wave, u_twist, u_distort, u_contrast, u_fade, u_sway, u_sphere, u_focal, u_vignette;
+
+      // トンネルを「環境」として方向 rd からサンプルする（オプアートの白黒）
+      // 前後どちらの向きでもトンネルが続くように abs(z) を使う
+      float envTunnel(vec3 rd) {
+        rd.xy += u_sway * vec2(sin(u_time * 0.30), cos(u_time * 0.23));
+        float fwd = abs(rd.z) + 0.001;              // 背後にもトンネルが続く
+        float rxy = length(rd.xy);
+        float tr = rxy / fwd;                       // 画面半径に相当
+        float depth = 1.0 / (tr + 0.07);            // 奥ほど大きい
+        float a = atan(rd.y, rd.x) + u_time * u_rot;
+        float v = depth * 0.6 + u_time * u_speed;
+
+        // 奥行きでねじれて螺旋になる＋ライリー風のうねり
+        float wa = a + u_twist * v + u_wave * sin(v * 2.0 + u_time * 0.2);
+        float wv = v + u_wave * 0.5 * sin(a * u_fold * 0.5);
+
+        float u = wa / 6.2831 * u_fold;
+        float w = wv * u_bands;
+        float c = mod(floor(u) + floor(w), 2.0);    // 市松（オプアート）
+
+        float fade = smoothstep(0.0, u_fade, tr);   // 奥は闇へ
+        return c * fade;
+      }
+
+      void main() {
+        vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
+        vec3 col;
+
+        vec2 sp = uv / u_sphere;
+        float d2 = dot(sp, sp);
+        if (d2 < 1.0) {
+          // 中央の金属球：トンネルを反射する
+          float z = sqrt(1.0 - d2);
+          vec3 N = vec3(sp, z);                     // 法線（+z が手前）
+          vec3 R = reflect(vec3(0.0, 0.0, -1.0), N); // 反射レイ
+          // 反射レイをうねらせて模様を歪ませる（中心の消失点も散らす）
+          R.xy += u_distort * vec2(sin(N.x * 10.0 + u_time * 1.3), cos(N.y * 10.0 - u_time * 1.1));
+          R.z  += u_distort * 0.5 * sin((N.x + N.y) * 8.0 + u_time);
+          float env = envTunnel(R);
+
+          float fres = pow(1.0 - max(N.z, 0.0), 4.0);
+          vec3 L = normalize(vec3(0.5, 0.7, 0.85));
+          float spec = pow(max(dot(normalize(R), L), 0.0), 80.0);
+
+          col = vec3(env);                          // 反射そのもの（鏡面）
+          col += fres * 0.30;                       // 控えめな縁光り
+          col += spec * 1.40;                       // 鋭く強いハイライト
+        } else {
+          // 背景：画面いっぱいのオプアート・トンネル
+          col = vec3(envTunnel(vec3(uv, u_focal)));
+        }
+
+        col = pow(clamp(col, 0.0, 1.0), vec3(u_contrast));
+
+        // ビネット（周辺を暗く）
+        float vig = 1.0 - u_vignette * smoothstep(0.45, 1.15, length(uv));
+        col *= vig;
+
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+      return s;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vert));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1
+    ]), gl.STATIC_DRAW);
+    const pos = gl.getAttribLocation(prog, 'a_position');
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+    const U = {};
+    ['u_res','u_time','u_speed','u_rot','u_fold','u_bands','u_wave','u_twist','u_distort','u_contrast','u_fade','u_sway','u_sphere','u_focal','u_vignette'
+    ].forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+    let startTime = performance.now();
+
+    let lastTap = 0;
+    canvas.addEventListener('click', async () => {
+      const now = performance.now();
+      if (now - lastTap < 280) {
+        try {
+          if (!document.fullscreenElement) await canvas.requestFullscreen();
+          else await document.exitFullscreen();
+        } catch (e) {}
+      }
+      lastTap = now;
+    });
+
+    window.addEventListener('resize', resize);
+
+    function animate() {
+      gl.uniform2f(U.u_res, width, height);
+      gl.uniform1f(U.u_time, (performance.now() - startTime) * 0.001);
+      gl.uniform1f(U.u_speed, P.speed);
+      gl.uniform1f(U.u_rot, P.rot);
+      gl.uniform1f(U.u_fold, P.fold);
+      gl.uniform1f(U.u_bands, P.bands);
+      gl.uniform1f(U.u_wave, P.wave);
+      gl.uniform1f(U.u_twist, P.twist);
+      gl.uniform1f(U.u_distort, P.distort);
+      gl.uniform1f(U.u_contrast, P.contrast);
+      gl.uniform1f(U.u_fade, P.fade);
+      gl.uniform1f(U.u_sway, P.sway);
+      gl.uniform1f(U.u_sphere, P.sphere);
+      gl.uniform1f(U.u_focal, P.focal);
+      gl.uniform1f(U.u_vignette, P.vignette);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(animate);
+    }
+
+    resize();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
