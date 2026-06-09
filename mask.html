@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Mask</title>
+  <style>
+    html, body {
+      margin: 0; width: 100%; height: 100%;
+      overflow: hidden; background: #000; touch-action: none;
+    }
+    canvas { display: block; width: 100vw; height: 100dvh; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const gl = canvas.getContext('webgl');
+
+    // ===== 調整可能パラメータ（3D メタリックマスク）=====
+    const P = {
+      camDist: 3.6,      // カメラ距離（大きいほど小さく写る）
+      mouthW: 0.26,      // 口の幅
+      mouthMax: 0.22,    // 口が開く最大量
+      mouthSpeed: 0.0,   // パクパクの速さ（0＝閉じたまま静止）
+      envSpeed: 0.55,    // 映り込みが動く速さ
+      contrast: 1.05,    // コントラスト
+      // 出てくる／公転する金属球（それぞれ大きさ違い）
+      ballRA: 0.09,      // 口から出る球
+      ballRB: 0.11,      // 額から出る球
+      ballRC: 0.08,      // 外周を回る球
+      rMouth: 0.62,      // 口の高さの横円軌道の半径（頭に触れない）
+      rFore: 0.88,       // 縦円軌道の半径（頭に触れない）
+      rAround: 0.95,     // 外周を回る軌道の半径
+      spMouth: 0.9,      // 各軌道の速度
+      spFore: 0.6,
+      spAround: 0.5,
+      tiltAround: 0.7    // 外周軌道の傾き
+    };
+
+    let width, height;
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth * dpr;
+      height = window.innerHeight * dpr;
+      canvas.width = width; canvas.height = height;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      gl.viewport(0, 0, width, height);
+    }
+
+    const vert = `
+      attribute vec2 a_position;
+      void main() { gl_Position = vec4(a_position, 0.0, 1.0); }
+    `;
+
+    const frag = `
+      precision highp float;
+      uniform vec2 u_res;
+      uniform float u_time, u_yaw, u_pitch, u_camDist;
+      uniform float u_mouthOpen, u_mouthW, u_mouthMax, u_envSpeed, u_contrast;
+      uniform vec3 u_ballA, u_ballB, u_ballC;
+      uniform vec3 u_ballR;   // 3つの球の半径
+
+      mat3 rotY(float a){ float c=cos(a), s=sin(a); return mat3(c,0.0,-s, 0.0,1.0,0.0, s,0.0,c); }
+      mat3 rotX(float a){ float c=cos(a), s=sin(a); return mat3(1.0,0.0,0.0, 0.0,c,-s, 0.0,s,c); }
+
+      float smin(float a, float b, float k){ float h=clamp(0.5+0.5*(b-a)/k,0.0,1.0); return mix(b,a,h)-k*h*(1.0-h); }
+      float smax(float a, float b, float k){ return -smin(-a,-b,k); }
+      float sdEllipsoid(vec3 p, vec3 r){ float k0=length(p/r); float k1=length(p/(r*r)); return k0*(k0-1.0)/k1; }
+      float sdSphere(vec3 p, float r){ return length(p)-r; }
+
+      // 目・口のキャビティの濃さ（影として使う）
+      float gCav;
+
+      float map(vec3 p){
+        // 頭（楕円体・前後に少し平たい）
+        float head = sdEllipsoid(p, vec3(0.55, 0.72, 0.52));
+        // 鼻
+        float nose = sdEllipsoid(p - vec3(0.0, -0.04, 0.46), vec3(0.09, 0.17, 0.13));
+        float d = smin(head, nose, 0.10);
+        // 両サイドの耳（平たい楕円体）
+        float earL = sdEllipsoid(p - vec3(0.53, 0.02, -0.02), vec3(0.08, 0.18, 0.13));
+        float earR = sdEllipsoid(p - vec3(-0.53, 0.02, -0.02), vec3(0.08, 0.18, 0.13));
+        d = smin(d, earL, 0.06);
+        d = smin(d, earR, 0.06);
+        // 目のくぼみ（くり抜き）
+        float eyeL = sdSphere(p - vec3(0.24, 0.12, 0.42), 0.16);
+        float eyeR = sdSphere(p - vec3(-0.24, 0.12, 0.42), 0.16);
+        d = smax(d, -eyeL, 0.05);
+        d = smax(d, -eyeR, 0.05);
+        // 口（開閉する楕円をくり抜き）
+        float openH = mix(0.02, u_mouthMax, u_mouthOpen);
+        float mouth = sdEllipsoid(p - vec3(0.0, -0.40, 0.40), vec3(u_mouthW, openH, 0.22));
+        float dFace = smax(d, -mouth, 0.04);
+
+        // 出てくる／公転する金属球
+        float balls = min(sdSphere(p - u_ballA, u_ballR.x),
+                      min(sdSphere(p - u_ballB, u_ballR.y),
+                          sdSphere(p - u_ballC, u_ballR.z)));
+
+        // キャビティ近接（陰影用・顔の表面のときだけ）
+        float ec = min(length((p - vec3(0.24, 0.12, 0.46)) / vec3(0.18,0.15,0.3)),
+                       length((p - vec3(-0.24,0.12, 0.46)) / vec3(0.18,0.15,0.3)));
+        float mc = length((p - vec3(0.0,-0.40,0.44)) / vec3(u_mouthW+0.04, openH+0.05, 0.3));
+        gCav = max(smoothstep(1.1, 0.6, ec), smoothstep(1.1, 0.5, mc)) * step(dFace, balls);
+
+        // 球は顔に触れない（普通の和集合）
+        return min(dFace, balls);
+      }
+
+      vec3 calcNormal(vec3 p){
+        vec2 e = vec2(1.0, -1.0) * 0.0015;
+        return normalize(e.xyy*map(p+e.xyy) + e.yyx*map(p+e.yyx) + e.yxy*map(p+e.yxy) + e.xxx*map(p+e.xxx));
+      }
+
+      // スタジオ風グレー環境（高コントラストで動く）
+      float envMap(vec3 r){
+        float t = r.y * 0.5 + 0.5;
+        float base = mix(0.02, 0.98, smoothstep(0.0, 1.0, t));
+        float ang = atan(r.x, max(abs(r.z), 0.001)) * sign(r.z + 0.0001);
+        base += 0.26 * sin(ang * 4.0 + u_time * u_envSpeed * 2.0);
+        base += 0.15 * sin(ang * 9.0 - u_time * u_envSpeed * 1.3);
+        base += smoothstep(0.86, 0.93, t) * 0.7;
+        float sweep = fract(ang / 6.2831 + u_time * u_envSpeed * 0.12);
+        base += smoothstep(0.06, 0.0, abs(sweep - 0.5)) * 0.6;
+        return clamp(base, 0.0, 1.0);
+      }
+
+      void main(){
+        vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
+
+        vec3 ro = vec3(0.0, 0.0, u_camDist);
+        vec3 rd = normalize(vec3(uv, -1.7));
+        mat3 rot = rotX(u_pitch) * rotY(u_yaw);
+        mat3 rotInv = rotY(-u_yaw) * rotX(-u_pitch);
+        vec3 oro = rot * ro;
+        vec3 ord = rot * rd;
+
+        float t = 0.0; bool hit = false; vec3 p;
+        for (int i = 0; i < 110; i++){
+          p = oro + ord * t;
+          float d = map(p);
+          if (d < 0.001){ hit = true; break; }
+          t += d;
+          if (t > 8.0) break;
+        }
+
+        vec3 col;
+        if (!hit){
+          // 背景：暗くビネット
+          float vig = 1.0 - 0.7 * smoothstep(0.3, 1.2, length(uv));
+          col = vec3(0.015) * vig;
+        } else {
+          float cav = gCav;
+          vec3 n = calcNormal(p);
+          vec3 refl = reflect(ord, n);
+          vec3 wrefl = rotInv * refl;          // ワールド空間の反射（回すと流れる）
+          float env = envMap(wrefl);
+
+          vec3 Lw = normalize(vec3(0.5, 0.7, 0.8));
+          float spec = pow(max(dot(wrefl, Lw), 0.0), 60.0);
+          float fres = pow(1.0 - max(dot(n, -ord), 0.0), 3.0);
+
+          col = vec3(env);
+          col += spec * 1.5;
+          col += fres * 0.30;
+          col *= mix(1.0, 0.10, cav);          // 目・口のくぼみを暗く
+        }
+
+        col = pow(clamp(col, 0.0, 1.0), vec3(u_contrast));
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+      return s;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vert));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1
+    ]), gl.STATIC_DRAW);
+    const pos = gl.getAttribLocation(prog, 'a_position');
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+    const U = {};
+    ['u_res','u_time','u_yaw','u_pitch','u_camDist','u_mouthOpen','u_mouthW','u_mouthMax','u_envSpeed','u_contrast',
+     'u_ballA','u_ballB','u_ballC','u_ballR'
+    ].forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+    // ===== ドラッグで回転 =====
+    let yaw = 0, pitch = 0, tYaw = 0, tPitch = 0;
+    let dragging = false, lastX = 0, lastY = 0, moved = false;
+    canvas.addEventListener('pointerdown', (e) => { dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY; });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      tYaw += (e.clientX - lastX) * 0.01;
+      tPitch += (e.clientY - lastY) * 0.01;
+      tPitch = Math.max(-1.2, Math.min(1.2, tPitch));
+      lastX = e.clientX; lastY = e.clientY; moved = true;
+    });
+    canvas.addEventListener('pointerup', () => { dragging = false; });
+    canvas.addEventListener('pointercancel', () => { dragging = false; });
+
+    let startTime = performance.now();
+    let lastTap = 0;
+    canvas.addEventListener('click', async () => {
+      if (moved) return;
+      const now = performance.now();
+      if (now - lastTap < 280) {
+        try {
+          if (!document.fullscreenElement) await canvas.requestFullscreen();
+          else await document.exitFullscreen();
+        } catch (e) {}
+      }
+      lastTap = now;
+    });
+
+    window.addEventListener('resize', resize);
+
+    function animate() {
+      const time = (performance.now() - startTime) * 0.001;
+      yaw += (tYaw - yaw) * 0.12;
+      pitch += (tPitch - pitch) * 0.12;
+      const mo = Math.pow(0.5 - 0.5 * Math.cos(time * P.mouthSpeed), 0.7);
+
+      // ① 横の円軌道：口の高さで頭の周りを回る
+      const a = time * P.spMouth;
+      const ballA = [P.rMouth * Math.sin(a), -0.40, P.rMouth * Math.cos(a)];
+      // ② 縦の円軌道：頭の後ろから前へ、上下に回る
+      const b = time * P.spFore;
+      const ballB = [0.0,
+                     P.rFore * Math.sin(b),
+                     P.rFore * Math.cos(b)];
+      // ③ 外周をぐるりと回る（傾いた軌道）
+      const c = time * P.spAround + 4.2;
+      const cx0 = Math.cos(c) * P.rAround, cy0 = Math.sin(c) * P.rAround;
+      const ballC = [cx0,
+                     cy0 * Math.cos(P.tiltAround),
+                     cy0 * Math.sin(P.tiltAround)];
+
+      gl.uniform2f(U.u_res, width, height);
+      gl.uniform1f(U.u_time, time);
+      gl.uniform1f(U.u_yaw, yaw);
+      gl.uniform1f(U.u_pitch, pitch);
+      gl.uniform1f(U.u_camDist, P.camDist);
+      gl.uniform1f(U.u_mouthOpen, mo);
+      gl.uniform1f(U.u_mouthW, P.mouthW);
+      gl.uniform1f(U.u_mouthMax, P.mouthMax);
+      gl.uniform1f(U.u_envSpeed, P.envSpeed);
+      gl.uniform1f(U.u_contrast, P.contrast);
+      gl.uniform3f(U.u_ballA, ballA[0], ballA[1], ballA[2]);
+      gl.uniform3f(U.u_ballB, ballB[0], ballB[1], ballB[2]);
+      gl.uniform3f(U.u_ballC, ballC[0], ballC[1], ballC[2]);
+      gl.uniform3f(U.u_ballR, P.ballRA, P.ballRB, P.ballRC);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(animate);
+    }
+
+    resize();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
