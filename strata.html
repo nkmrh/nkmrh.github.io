@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Strata</title>
+  <style>
+    html, body {
+      margin: 0; width: 100%; height: 100%;
+      overflow: hidden; background: #f4f3ee; touch-action: none;
+    }
+    canvas { display: block; width: 100vw; height: 100dvh; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const gl = canvas.getContext('webgl');
+
+    // ===== 調整可能パラメータ（静かなアンビエント向け）=====
+    const P = {
+      warp: 0.55,        // 層の折れ曲がる強さ
+      bands: 9.0,        // 層の数
+      flow: 0.006,       // 層がゆっくり立ちのぼる速さ
+      foldSpeed: 0.04,   // 折りのうねる速さ
+      grain: 0.07        // 石肌の細かいざらつき
+    };
+
+    // 読み込むたびに変わる、くすんだ石の色味
+    let HUE = Math.random();
+    let SAT = 0.22 + Math.random() * 0.16;
+
+    let width, height;
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth * dpr;
+      height = window.innerHeight * dpr;
+      canvas.width = width; canvas.height = height;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      gl.viewport(0, 0, width, height);
+    }
+
+    const vert = `
+      attribute vec2 a_position;
+      void main() { gl_Position = vec4(a_position, 0.0, 1.0); }
+    `;
+
+    const frag = `
+      precision highp float;
+      uniform vec2 u_res;
+      uniform float u_time;
+      uniform float u_hue, u_sat, u_warp, u_bands, u_flow, u_foldSpeed, u_grain;
+
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float noise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        float a = hash(i), b = hash(i + vec2(1.0, 0.0));
+        float c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+      }
+      float fbm(vec2 p) {
+        float v = 0.0, a = 0.5;
+        for (int i = 0; i < 6; i++) { v += a * noise(p); p *= 2.02; a *= 0.5; }
+        return v;
+      }
+      vec3 hsl2rgb(vec3 c) {
+        vec3 r = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+        return c.z + c.y * (r - 0.5) * (1.0 - abs(2.0 * c.z - 1.0));
+      }
+      // 層ごとの色（隣り合う層で色相と明るさがゆらぐ）
+      vec3 bandColor(float i) {
+        float r1 = hash(vec2(i, 7.3));
+        float r2 = hash(vec2(i, 19.1));
+        float r3 = hash(vec2(i, 42.7));
+        float hue = fract(u_hue + (r1 - 0.5) * 0.14 + sin(i * 0.5) * 0.02);
+        float sat = u_sat * (0.55 + 0.5 * r2);
+        float lit = 0.52 + 0.26 * r3;
+        return hsl2rgb(vec3(hue, sat, lit));
+      }
+
+      void main() {
+        vec2 p = (gl_FragCoord.xy - 0.5 * u_res) / min(u_res.x, u_res.y);
+
+        // 層をゆるやかに折り曲げる（ドメインワープ）
+        float t = u_time * u_foldSpeed;
+        vec2 q = vec2(fbm(p * 1.3 + vec2(0.0, t)), fbm(p * 1.3 + vec2(5.2, 1.3) - t * 0.8));
+        vec2 pp = p + (q - 0.5) * u_warp;
+
+        // 高さ場 = ほぼ横の層、ゆっくり立ちのぼる
+        float warpY = fbm(pp * 2.2 + 11.0);
+        float field = (pp.y * 0.5 + 0.5) * u_bands + warpY * 0.9 + u_time * u_flow;
+
+        float bi = floor(field);
+        float bf = fract(field);
+        vec3 c0 = bandColor(bi);
+        vec3 c1 = bandColor(bi + 1.0);
+        float blend = smoothstep(0.62, 1.0, bf);
+        vec3 col = mix(c0, c1, blend);
+
+        // 層の境目に走る細い脈（瑪瑙の縞）
+        float line = smoothstep(0.0, 0.03, bf) * smoothstep(0.10, 0.03, bf);
+        vec3 rind = hsl2rgb(vec3(fract(u_hue + 0.04), u_sat * 0.4, 0.86));
+        col = mix(col, rind, line * 0.6);
+
+        // 石肌の細かなざらつき
+        float g = fbm(pp * 40.0);
+        col *= 1.0 - u_grain + u_grain * g;
+
+        // 高さ場の傾きから淡い陰影（うっすら立体に）
+        float e = 0.004;
+        float fx = fbm((pp + vec2(e, 0.0)) * 2.2 + 11.0) - warpY;
+        float fy = fbm((pp + vec2(0.0, e)) * 2.2 + 11.0) - warpY;
+        float sh = clamp(0.5 + (fx - fy) * 6.0, 0.0, 1.0);
+        col *= 0.86 + 0.22 * sh;
+
+        // 磨いた石のような淡いビネット
+        float v = smoothstep(1.15, 0.2, length(p));
+        col *= 0.92 + 0.08 * v;
+
+        col = pow(clamp(col, 0.0, 1.0), vec3(0.92));
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+      return s;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vert));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1
+    ]), gl.STATIC_DRAW);
+    const pos = gl.getAttribLocation(prog, 'a_position');
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+    const U = {};
+    ['u_res','u_time','u_hue','u_sat','u_warp','u_bands','u_flow','u_foldSpeed','u_grain'
+    ].forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+    let startTime = performance.now();
+    function nowSec() { return (performance.now() - startTime) * 0.001; }
+
+    let lastTap = 0;
+    canvas.addEventListener('click', async () => {
+      const now = performance.now();
+      if (now - lastTap < 280) {
+        try {
+          if (!document.fullscreenElement) await canvas.requestFullscreen();
+          else await document.exitFullscreen();
+        } catch (e) {}
+      }
+      lastTap = now;
+    });
+
+    window.addEventListener('resize', resize);
+
+    function animate() {
+      gl.uniform2f(U.u_res, width, height);
+      gl.uniform1f(U.u_time, nowSec());
+      gl.uniform1f(U.u_hue, HUE);
+      gl.uniform1f(U.u_sat, SAT);
+      gl.uniform1f(U.u_warp, P.warp);
+      gl.uniform1f(U.u_bands, P.bands);
+      gl.uniform1f(U.u_flow, P.flow);
+      gl.uniform1f(U.u_foldSpeed, P.foldSpeed);
+      gl.uniform1f(U.u_grain, P.grain);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(animate);
+    }
+
+    resize();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
