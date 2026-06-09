@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Molten</title>
+  <style>
+    html, body {
+      margin: 0; width: 100%; height: 100%;
+      overflow: hidden; background: #000; touch-action: none;
+    }
+    canvas { display: block; width: 100vw; height: 100dvh; }
+    #gear {
+      position: fixed; top: 8px; right: 8px; z-index: 11;
+      width: 36px; height: 36px; border-radius: 50%;
+      background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #666;
+      font-size: 17px; line-height: 34px; text-align: center; cursor: pointer;
+      user-select: none; -webkit-user-select: none;
+    }
+    #panel {
+      position: fixed; top: 0; right: 0; z-index: 10;
+      width: 240px; max-height: 100dvh; overflow-y: auto;
+      box-sizing: border-box; padding: 48px 14px 40px;
+      background: rgba(0,0,0,0.72); color: #eee;
+      font: 11px/1.4 system-ui, -apple-system, sans-serif;
+      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+      transform: translateX(100%); transition: transform .25s ease;
+    }
+    #panel.open { transform: translateX(0); }
+    #panel h4 {
+      margin: 14px 0 6px; font-size: 10px; font-weight: 600;
+      color: #7cf; letter-spacing: .08em; text-transform: uppercase;
+    }
+    #panel .row { margin: 7px 0; }
+    #panel .row .lab { display: flex; justify-content: space-between; margin-bottom: 2px; }
+    #panel .row .val { color: #9ad; }
+    #panel input[type=range] { width: 100%; margin: 0; accent-color: #6cf; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="gear">⚙</div>
+  <div id="panel"></div>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const gl = canvas.getContext('webgl');
+
+    // ===== 調整可能パラメータ =====
+    const P = {
+      flowSpeed: 0.13,    // 流れの速さ
+      warpAmt: 2.00,      // うねりの強さ
+      inkScale: 3.35,     // インクの細かさ
+      inkLo: 0.00,        // インクの薄い側
+      inkHi: 0.00,        // インクの濃い側
+      colorScale: 4.00,   // 色の細かさ
+      colorDrift: 0.030,  // 色の移ろう速さ
+      glow: 0.00,         // 発光の締まり
+      gamma: 0.77,        // コントラスト
+      dropGrow: 0.195,    // インク滴の広がる速さ
+      dropLife: 1.00,     // インク滴の寿命
+      dropStr: 3.00,      // インク滴の濃さ
+      stirStr: 1.48,      // かき混ぜの押し出し
+      stirSwirl: 0.40,    // かき混ぜの渦
+      stirRadius: 1.00,   // かき混ぜの範囲
+      stirDecay: 1.56,    // かき混ぜの収まり
+      metallic: 1.00      // メタリックな艶
+    };
+
+    let width, height;
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth * dpr;
+      height = window.innerHeight * dpr;
+      canvas.width = width; canvas.height = height;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      gl.viewport(0, 0, width, height);
+    }
+
+    const vert = `
+      attribute vec2 a_position;
+      void main() { gl_Position = vec4(a_position, 0.0, 1.0); }
+    `;
+
+    const NDROPS = 6;
+    const NSTIR = 12;
+    const frag = `
+      precision highp float;
+      uniform vec2 u_res;
+      uniform float u_time;
+      uniform vec2 u_drops[${NDROPS}];
+      uniform float u_dropT[${NDROPS}];
+      uniform float u_dropHue[${NDROPS}];
+      uniform vec2 u_stirPos[${NSTIR}];
+      uniform vec2 u_stirDir[${NSTIR}];
+      uniform float u_stirT[${NSTIR}];
+      uniform float u_flowSpeed, u_warpAmt, u_inkScale, u_inkLo, u_inkHi;
+      uniform float u_colorScale, u_colorDrift, u_glow, u_gamma;
+      uniform float u_dropGrow, u_dropLife, u_dropStr;
+      uniform float u_stirStr, u_stirSwirl, u_stirRadius, u_stirDecay;
+      uniform float u_metallic;
+
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float noise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        float a = hash(i), b = hash(i + vec2(1.0, 0.0));
+        float c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+      }
+      float fbm(vec2 p) {
+        float v = 0.0, a = 0.5;
+        for (int i = 0; i < 5; i++) { v += a * noise(p); p *= 2.03; a *= 0.5; }
+        return v;
+      }
+      vec2 warp(vec2 p, float t) {
+        vec2 q = vec2(fbm(p + 0.10 * t), fbm(p + vec2(5.2, 1.3) - 0.12 * t));
+        vec2 r = vec2(fbm(p + 3.0 * q + vec2(1.7, 9.2) + 0.15 * t),
+                      fbm(p + 3.0 * q + vec2(8.3, 2.8) - 0.13 * t));
+        return r;
+      }
+      vec3 palette(float h) {
+        return 0.5 + 0.5 * cos(6.28318 * (h + vec3(0.0, 0.33, 0.67)));
+      }
+
+      void main() {
+        vec2 p = (gl_FragCoord.xy - 0.5 * u_res) / min(u_res.x, u_res.y);
+
+        // ドラッグによるかき混ぜ（押し出し＋渦）
+        vec2 stir = vec2(0.0);
+        for (int i = 0; i < ${NSTIR}; i++) {
+          float age = u_time - u_stirT[i];
+          if (age < 0.0 || age > 12.0) continue;
+          vec2 d = p - u_stirPos[i];
+          float infl = exp(-age * u_stirDecay) * smoothstep(u_stirRadius, 0.0, length(d));
+          vec2 dir = u_stirDir[i];
+          vec2 perp = vec2(-dir.y, dir.x);
+          stir += (dir * u_stirStr + perp * u_stirSwirl) * infl;
+        }
+
+        // 流れに沿って座標をゆがめる＋かき混ぜを加算
+        vec2 w  = warp(p * 1.5 + 10.0, u_time * u_flowSpeed);
+        vec2 pp = p + (w - 0.5) * u_warpAmt + stir;
+
+        // インクの濃度（高さ場）と法線
+        vec2 idrift = vec2(0.0, u_time * 0.05);
+        float e = 0.012;
+        float hC = fbm(pp * u_inkScale + idrift);
+        float hX = fbm((pp + vec2(e, 0.0)) * u_inkScale + idrift);
+        float hY = fbm((pp + vec2(0.0, e)) * u_inkScale + idrift);
+        float d = smoothstep(u_inkLo, u_inkHi, hC);
+        vec3 N = normalize(vec3((hC - hX) * 4.0, (hC - hY) * 4.0, 1.0));
+
+        // 色はゆっくり移ろう
+        float hueField = fbm(pp * u_colorScale + 20.0) + u_time * u_colorDrift;
+        vec3 ink = palette(hueField);
+
+        vec3 water = vec3(0.015, 0.025, 0.045);
+        float flow = 0.55 + 0.45 * length(w - 0.5);
+        vec3 col = mix(water, ink, d * flow);
+
+        // メタリックな艶（スペキュラー＋フレネルの縁光り）
+        vec3 L = normalize(vec3(0.5, 0.6, 0.8));
+        float spec = pow(max(dot(N, L), 0.0), 18.0);
+        float fres = pow(1.0 - max(N.z, 0.0), 3.0);
+        vec3 sheen = mix(vec3(1.0), ink, 0.4);             // インク色を帯びたハイライト
+        col = mix(col, col * 0.72, u_metallic * d * 0.6);  // 地を締めて金属らしく
+        col += sheen * (spec * 1.7 + fres * 0.25) * u_metallic * d;
+
+        // 落ちたインクが滲みながら広がる
+        for (int i = 0; i < ${NDROPS}; i++) {
+          float age = u_time - u_dropT[i];
+          if (age < 0.0 || age > 30.0) continue;
+          float dist = length(pp - u_drops[i]);
+          float grow = 0.04 + age * u_dropGrow;
+          float bloom = smoothstep(grow, 0.0, dist) * exp(-age * u_dropLife);
+          col += palette(u_dropHue[i]) * bloom * u_dropStr;
+        }
+
+        col = col / (1.0 + col * u_glow);
+        col = pow(col, vec3(u_gamma));
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+      return s;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vert));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1
+    ]), gl.STATIC_DRAW);
+    const pos = gl.getAttribLocation(prog, 'a_position');
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+    const U = {};
+    ['u_res','u_time','u_drops','u_dropT','u_dropHue','u_stirPos','u_stirDir','u_stirT',
+     'u_flowSpeed','u_warpAmt','u_inkScale','u_inkLo','u_inkHi','u_colorScale','u_colorDrift',
+     'u_glow','u_gamma','u_dropGrow','u_dropLife','u_dropStr',
+     'u_stirStr','u_stirSwirl','u_stirRadius','u_stirDecay','u_metallic'
+    ].forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+    const dropPos = new Float32Array(NDROPS * 2);
+    const dropT   = new Float32Array(NDROPS).fill(-100);
+    const dropHue = new Float32Array(NDROPS);
+    let dropIdx = 0;
+
+    const stirPos = new Float32Array(NSTIR * 2);
+    const stirDir = new Float32Array(NSTIR * 2);
+    const stirT   = new Float32Array(NSTIR).fill(-100);
+    let stirIdx = 0;
+
+    let startTime = performance.now();
+    function nowSec() { return (performance.now() - startTime) * 0.001; }
+
+    function toCoord(clientX, clientY) {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const rect = canvas.getBoundingClientRect();
+      const x = (clientX - rect.left) * dpr;
+      const y = (clientY - rect.top) * dpr;
+      const m = Math.min(width, height);
+      return [(x - 0.5 * width) / m, (0.5 * height - y) / m];
+    }
+
+    function addDrop(clientX, clientY) {
+      const [cx, cy] = toCoord(clientX, clientY);
+      const i = dropIdx % NDROPS;
+      dropPos[i * 2] = cx; dropPos[i * 2 + 1] = cy;
+      dropT[i] = nowSec(); dropHue[i] = Math.random();
+      dropIdx++;
+    }
+
+    function addStir(cx, cy, dx, dy) {
+      const i = stirIdx % NSTIR;
+      stirPos[i * 2] = cx; stirPos[i * 2 + 1] = cy;
+      stirDir[i * 2] = dx; stirDir[i * 2 + 1] = dy;
+      stirT[i] = nowSec();
+      stirIdx++;
+    }
+
+    let lastTap = 0;
+    canvas.addEventListener('click', async () => {
+      const now = performance.now();
+      if (now - lastTap < 280) {
+        try {
+          if (!document.fullscreenElement) await canvas.requestFullscreen();
+          else await document.exitFullscreen();
+        } catch (e) {}
+      }
+      lastTap = now;
+    });
+
+    window.addEventListener('resize', resize);
+
+    function animate() {
+      gl.uniform2f(U.u_res, width, height);
+      gl.uniform1f(U.u_time, nowSec());
+      gl.uniform2fv(U.u_drops, dropPos);
+      gl.uniform1fv(U.u_dropT, dropT);
+      gl.uniform1fv(U.u_dropHue, dropHue);
+      gl.uniform2fv(U.u_stirPos, stirPos);
+      gl.uniform2fv(U.u_stirDir, stirDir);
+      gl.uniform1fv(U.u_stirT, stirT);
+      gl.uniform1f(U.u_flowSpeed, P.flowSpeed);
+      gl.uniform1f(U.u_warpAmt, P.warpAmt);
+      gl.uniform1f(U.u_inkScale, P.inkScale);
+      gl.uniform1f(U.u_inkLo, P.inkLo);
+      gl.uniform1f(U.u_inkHi, P.inkHi);
+      gl.uniform1f(U.u_colorScale, P.colorScale);
+      gl.uniform1f(U.u_colorDrift, P.colorDrift);
+      gl.uniform1f(U.u_glow, P.glow);
+      gl.uniform1f(U.u_gamma, P.gamma);
+      gl.uniform1f(U.u_dropGrow, P.dropGrow);
+      gl.uniform1f(U.u_dropLife, P.dropLife);
+      gl.uniform1f(U.u_dropStr, P.dropStr);
+      gl.uniform1f(U.u_stirStr, P.stirStr);
+      gl.uniform1f(U.u_stirSwirl, P.stirSwirl);
+      gl.uniform1f(U.u_stirRadius, P.stirRadius);
+      gl.uniform1f(U.u_stirDecay, P.stirDecay);
+      gl.uniform1f(U.u_metallic, P.metallic);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(animate);
+    }
+
+    // ===== コントロールパネル =====
+    function buildPanel() {
+      const panel = document.getElementById('panel');
+      const gear = document.getElementById('gear');
+      gear.addEventListener('click', () => panel.classList.toggle('open'));
+      ['pointerdown', 'pointerup', 'click', 'dblclick'].forEach(ev =>
+        panel.addEventListener(ev, e => e.stopPropagation()));
+
+      const config = [
+        ['流れ'],
+        ['flowSpeed', '流れの速さ', 0, 0.4, 0.005],
+        ['warpAmt', 'うねりの強さ', 0, 2, 0.01],
+        ['インク'],
+        ['metallic', 'メタリック', 0, 1, 0.01],
+        ['inkScale', 'インクの細かさ', 0.5, 6, 0.05],
+        ['inkLo', 'インク薄い側', 0, 1, 0.01],
+        ['inkHi', 'インク濃い側', 0, 1.5, 0.01],
+        ['colorScale', '色の細かさ', 0.2, 4, 0.05],
+        ['colorDrift', '色の移ろい', 0, 0.03, 0.0005],
+        ['glow', '発光の締まり', 0, 1, 0.01],
+        ['gamma', 'コントラスト', 0.5, 1.5, 0.01],
+        ['インク滴'],
+        ['dropGrow', '広がる速さ', 0, 0.2, 0.005],
+        ['dropLife', '寿命', 0.05, 1, 0.01],
+        ['dropStr', '濃さ', 0, 3, 0.05],
+        ['かき混ぜ'],
+        ['stirStr', '押し出し', 0, 2, 0.02],
+        ['stirSwirl', '渦', 0, 2, 0.02],
+        ['stirRadius', '範囲', 0.05, 1, 0.01],
+        ['stirDecay', '収まり', 0.1, 2, 0.02]
+      ];
+
+      config.forEach(c => {
+        if (c.length === 1) {
+          const h = document.createElement('h4');
+          h.textContent = c[0]; panel.appendChild(h); return;
+        }
+        const [key, label, min, max, stepv] = c;
+        const row = document.createElement('div'); row.className = 'row';
+        const lab = document.createElement('div'); lab.className = 'lab';
+        const name = document.createElement('span'); name.textContent = label;
+        const val = document.createElement('span'); val.className = 'val'; val.textContent = P[key];
+        lab.appendChild(name); lab.appendChild(val);
+        const input = document.createElement('input');
+        input.type = 'range'; input.min = min; input.max = max; input.step = stepv; input.value = P[key];
+        input.addEventListener('input', () => {
+          const v = parseFloat(input.value);
+          P[key] = v;
+          val.textContent = (stepv < 0.01) ? v.toFixed(4) : (stepv < 1 ? v.toFixed(2) : v);
+        });
+        row.appendChild(lab); row.appendChild(input);
+        panel.appendChild(row);
+      });
+    }
+
+    resize();
+    buildPanel();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
