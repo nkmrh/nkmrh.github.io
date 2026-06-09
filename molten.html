@@ -10,37 +10,10 @@
       overflow: hidden; background: #000; touch-action: none;
     }
     canvas { display: block; width: 100vw; height: 100dvh; }
-    #gear {
-      position: fixed; top: 8px; right: 8px; z-index: 11;
-      width: 36px; height: 36px; border-radius: 50%;
-      background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #666;
-      font-size: 17px; line-height: 34px; text-align: center; cursor: pointer;
-      user-select: none; -webkit-user-select: none;
-    }
-    #panel {
-      position: fixed; top: 0; right: 0; z-index: 10;
-      width: 240px; max-height: 100dvh; overflow-y: auto;
-      box-sizing: border-box; padding: 48px 14px 40px;
-      background: rgba(0,0,0,0.72); color: #eee;
-      font: 11px/1.4 system-ui, -apple-system, sans-serif;
-      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-      transform: translateX(100%); transition: transform .25s ease;
-    }
-    #panel.open { transform: translateX(0); }
-    #panel h4 {
-      margin: 14px 0 6px; font-size: 10px; font-weight: 600;
-      color: #7cf; letter-spacing: .08em; text-transform: uppercase;
-    }
-    #panel .row { margin: 7px 0; }
-    #panel .row .lab { display: flex; justify-content: space-between; margin-bottom: 2px; }
-    #panel .row .val { color: #9ad; }
-    #panel input[type=range] { width: 100%; margin: 0; accent-color: #6cf; }
   </style>
 </head>
 <body>
   <canvas id="canvas"></canvas>
-  <div id="gear">⚙</div>
-  <div id="panel"></div>
   <script>
     const canvas = document.getElementById('canvas');
     const gl = canvas.getContext('webgl');
@@ -293,63 +266,7 @@
       requestAnimationFrame(animate);
     }
 
-    // ===== コントロールパネル =====
-    function buildPanel() {
-      const panel = document.getElementById('panel');
-      const gear = document.getElementById('gear');
-      gear.addEventListener('click', () => panel.classList.toggle('open'));
-      ['pointerdown', 'pointerup', 'click', 'dblclick'].forEach(ev =>
-        panel.addEventListener(ev, e => e.stopPropagation()));
-
-      const config = [
-        ['流れ'],
-        ['flowSpeed', '流れの速さ', 0, 0.4, 0.005],
-        ['warpAmt', 'うねりの強さ', 0, 2, 0.01],
-        ['インク'],
-        ['metallic', 'メタリック', 0, 1, 0.01],
-        ['inkScale', 'インクの細かさ', 0.5, 6, 0.05],
-        ['inkLo', 'インク薄い側', 0, 1, 0.01],
-        ['inkHi', 'インク濃い側', 0, 1.5, 0.01],
-        ['colorScale', '色の細かさ', 0.2, 4, 0.05],
-        ['colorDrift', '色の移ろい', 0, 0.03, 0.0005],
-        ['glow', '発光の締まり', 0, 1, 0.01],
-        ['gamma', 'コントラスト', 0.5, 1.5, 0.01],
-        ['インク滴'],
-        ['dropGrow', '広がる速さ', 0, 0.2, 0.005],
-        ['dropLife', '寿命', 0.05, 1, 0.01],
-        ['dropStr', '濃さ', 0, 3, 0.05],
-        ['かき混ぜ'],
-        ['stirStr', '押し出し', 0, 2, 0.02],
-        ['stirSwirl', '渦', 0, 2, 0.02],
-        ['stirRadius', '範囲', 0.05, 1, 0.01],
-        ['stirDecay', '収まり', 0.1, 2, 0.02]
-      ];
-
-      config.forEach(c => {
-        if (c.length === 1) {
-          const h = document.createElement('h4');
-          h.textContent = c[0]; panel.appendChild(h); return;
-        }
-        const [key, label, min, max, stepv] = c;
-        const row = document.createElement('div'); row.className = 'row';
-        const lab = document.createElement('div'); lab.className = 'lab';
-        const name = document.createElement('span'); name.textContent = label;
-        const val = document.createElement('span'); val.className = 'val'; val.textContent = P[key];
-        lab.appendChild(name); lab.appendChild(val);
-        const input = document.createElement('input');
-        input.type = 'range'; input.min = min; input.max = max; input.step = stepv; input.value = P[key];
-        input.addEventListener('input', () => {
-          const v = parseFloat(input.value);
-          P[key] = v;
-          val.textContent = (stepv < 0.01) ? v.toFixed(4) : (stepv < 1 ? v.toFixed(2) : v);
-        });
-        row.appendChild(lab); row.appendChild(input);
-        panel.appendChild(row);
-      });
-    }
-
     resize();
-    buildPanel();
     requestAnimationFrame(animate);
   </script>
 </body>
