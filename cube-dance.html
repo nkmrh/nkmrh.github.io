@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Cube Dance</title>
+  <style>
+    html, body {
+      margin: 0; width: 100%; height: 100%;
+      overflow: hidden; background: #000; touch-action: none;
+    }
+    canvas { display: block; width: 100vw; height: 100dvh; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const gl = canvas.getContext('webgl');
+
+    // ===== 調整可能パラメータ（金属キューブのスライドパズル）=====
+    const P = {
+      camDist: 9.5,      // カメラ距離（大きいほど全体が小さく中央に収まる）
+      spacing: 1.00,     // マスの間隔
+      cube: 0.45,        // キューブの大きさ（半分・マスいっぱいで隙間ほぼ無し）
+      moveDur: 0.45,     // 1手のスライドにかかる秒数
+      maxMoves: 5,       // 同時に動かすキューブの数
+      envSpeed: 0.5,     // 映り込みが動く速さ
+      contrast: 1.05     // コントラスト
+    };
+
+    const NCUBE = 7;     // 3x3x3 の立体格子に 7 個（残りは空き）
+
+    let width, height;
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth * dpr;
+      height = window.innerHeight * dpr;
+      canvas.width = width; canvas.height = height;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      gl.viewport(0, 0, width, height);
+    }
+
+    const vert = `
+      attribute vec2 a_position;
+      void main() { gl_Position = vec4(a_position, 0.0, 1.0); }
+    `;
+
+    const frag = `
+      precision highp float;
+      uniform vec2 u_res;
+      uniform float u_time, u_az, u_elev, u_camDist;
+      uniform float u_cube, u_envSpeed, u_contrast;
+      uniform vec3 u_cubes[7];
+
+      float sdBox(vec3 p, vec3 b, float r){
+        vec3 q = abs(p) - b;
+        return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
+      }
+
+      float map(vec3 p){
+        float d = 1e9;
+        for (int i = 0; i < 7; i++){
+          d = min(d, sdBox(p - u_cubes[i], vec3(u_cube), 0.04));
+        }
+        return d;
+      }
+
+      vec3 calcNormal(vec3 p){
+        vec2 e = vec2(1.0, -1.0) * 0.0015;
+        return normalize(e.xyy*map(p+e.xyy) + e.yyx*map(p+e.yyx) + e.yxy*map(p+e.yxy) + e.xxx*map(p+e.xxx));
+      }
+
+      float calcAO(vec3 p, vec3 n){
+        float o = 0.0, s = 1.0;
+        for (int i = 0; i < 5; i++){
+          float h = 0.02 + 0.13 * float(i);
+          o += (h - map(p + n * h)) * s;
+          s *= 0.68;
+        }
+        return clamp(1.0 - 1.4 * o, 0.0, 1.0);
+      }
+
+      // スタジオ風グレー環境（高コントラストで動く）
+      float envMap(vec3 r){
+        float t = r.y * 0.5 + 0.5;
+        float base = mix(0.03, 0.97, smoothstep(0.0, 1.0, t));
+        float ang = atan(r.x, max(abs(r.z), 0.001)) * sign(r.z + 0.0001);
+        base += 0.24 * sin(ang * 4.0 + u_time * u_envSpeed * 2.0);
+        base += 0.14 * sin(ang * 9.0 - u_time * u_envSpeed * 1.3);
+        base += smoothstep(0.86, 0.93, t) * 0.6;
+        float sweep = fract(ang / 6.2831 + u_time * u_envSpeed * 0.12);
+        base += smoothstep(0.06, 0.0, abs(sweep - 0.5)) * 0.55;
+        return clamp(base, 0.0, 1.0);
+      }
+
+      void main(){
+        vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
+
+        float ce = cos(u_elev), se = sin(u_elev);
+        vec3 ro = u_camDist * vec3(sin(u_az) * ce, se, cos(u_az) * ce);
+        vec3 ta = vec3(0.0, 0.0, 0.0);
+        vec3 ww = normalize(ta - ro);
+        vec3 uu = normalize(cross(ww, vec3(0.0, 1.0, 0.0)));
+        vec3 vv = cross(uu, ww);
+        vec3 rd = normalize(uv.x * uu + uv.y * vv + 1.6 * ww);
+
+        float t = 0.0; bool hit = false; vec3 p;
+        for (int i = 0; i < 90; i++){
+          p = ro + rd * t;
+          float d = map(p);
+          if (d < 0.001){ hit = true; break; }
+          t += d;
+          if (t > 20.0) break;
+        }
+
+        vec3 col;
+        if (!hit){
+          float vig = 1.0 - 0.7 * smoothstep(0.2, 1.2, length(uv));
+          col = vec3(0.015) * vig;
+        } else {
+          vec3 n = calcNormal(p);
+          float ao = calcAO(p, n);
+          vec3 refl = reflect(rd, n);
+          float env = envMap(refl);
+          vec3 Lw = normalize(vec3(0.5, 0.7, 0.8));
+          float spec = pow(max(dot(refl, Lw), 0.0), 50.0);
+          float fres = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
+          col = vec3(env) * ao;
+          col += spec * 1.3;
+          col += fres * 0.25;
+        }
+
+        col = pow(clamp(col, 0.0, 1.0), vec3(u_contrast));
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+      return s;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vert));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1
+    ]), gl.STATIC_DRAW);
+    const pos = gl.getAttribLocation(prog, 'a_position');
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+    const U = {};
+    ['u_res','u_time','u_az','u_elev','u_camDist','u_cube','u_envSpeed','u_contrast','u_cubes'
+    ].forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+    // ===== 3D スライドパズルの手順（JS で管理）=====
+    // 3x3x3 の格子。マス i → (x,y,z)
+    function slotPos(i) {
+      const x = i % 3, y = ((i / 3) | 0) % 3, z = (i / 9) | 0;
+      return [(x - 1) * P.spacing, (y - 1) * P.spacing, (z - 1) * P.spacing];
+    }
+    function neighbors(slot) {
+      const x = slot % 3, y = ((slot / 3) | 0) % 3, z = (slot / 9) | 0, res = [];
+      if (x > 0) res.push(slot - 1); if (x < 2) res.push(slot + 1);   // 左右
+      if (y > 0) res.push(slot - 3); if (y < 2) res.push(slot + 3);   // 上下
+      if (z > 0) res.push(slot - 9); if (z < 2) res.push(slot + 9);   // 奥(前後)
+      return res;
+    }
+    // 中心＋6方向の立体クロスに配置
+    let cubeSlot = [13, 12, 14, 10, 16, 4, 22];
+    let occupant = new Array(27).fill(-1);
+    cubeSlot.forEach((s, ci) => occupant[s] = ci);
+    const isMoving = new Array(NCUBE).fill(false);
+    const lastFrom = new Array(NCUBE).fill(-1);
+    let active = [];   // 進行中の手 {cube, from, to, start}
+
+    function smoothstep(x) { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); }
+
+    // 空いていて予約もされていない隣マスへ動かせる手を1つ始める
+    function tryStartMove(time) {
+      const cands = [];
+      for (let ci = 0; ci < NCUBE; ci++) {
+        if (isMoving[ci]) continue;
+        const s = cubeSlot[ci];
+        for (const nb of neighbors(s)) {
+          if (occupant[nb] === -1 && nb !== lastFrom[ci]) cands.push([ci, nb]);
+        }
+      }
+      if (cands.length === 0) return false;
+      const [ci, nb] = cands[Math.floor(Math.random() * cands.length)];
+      occupant[nb] = ci;          // 行き先を予約（元マスも占有したまま）
+      isMoving[ci] = true;
+      active.push({ cube: ci, from: cubeSlot[ci], to: nb, start: time });
+      return true;
+    }
+
+    const cubesBuf = new Float32Array(NCUBE * 3);
+    function updatePuzzle(time) {
+      // 完了した手を片付ける
+      for (let i = active.length - 1; i >= 0; i--) {
+        const m = active[i];
+        if ((time - m.start) / P.moveDur >= 1) {
+          occupant[m.from] = -1;       // 元マスを解放
+          cubeSlot[m.cube] = m.to;
+          isMoving[m.cube] = false;
+          lastFrom[m.cube] = m.from;
+          active.splice(i, 1);
+        }
+      }
+      // 同時手数まで新しい手を始める
+      while (active.length < P.maxMoves) { if (!tryStartMove(time)) break; }
+
+      // 位置を計算
+      for (let ci = 0; ci < NCUBE; ci++) {
+        const pos = slotPos(cubeSlot[ci]);
+        cubesBuf[ci * 3] = pos[0]; cubesBuf[ci * 3 + 1] = pos[1]; cubesBuf[ci * 3 + 2] = pos[2];
+      }
+      for (const m of active) {
+        const e = smoothstep((time - m.start) / P.moveDur);
+        const a = slotPos(m.from), b = slotPos(m.to);
+        cubesBuf[m.cube * 3] = a[0] + (b[0] - a[0]) * e;
+        cubesBuf[m.cube * 3 + 1] = a[1] + (b[1] - a[1]) * e;
+        cubesBuf[m.cube * 3 + 2] = a[2] + (b[2] - a[2]) * e;
+      }
+    }
+
+    // ===== ドラッグでカメラ回転（放すと自動周回）=====
+    let az = 0.6, elev = 0.7, tAz = 0.6, tElev = 0.7;
+    let dragging = false, lastX = 0, lastY = 0, moved = false;
+    canvas.addEventListener('pointerdown', (e) => { dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY; });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      tAz -= (e.clientX - lastX) * 0.008;
+      tElev += (e.clientY - lastY) * 0.008;
+      tElev = Math.max(0.1, Math.min(1.4, tElev));
+      lastX = e.clientX; lastY = e.clientY; moved = true;
+    });
+    canvas.addEventListener('pointerup', () => { dragging = false; });
+    canvas.addEventListener('pointercancel', () => { dragging = false; });
+
+    let startTime = performance.now();
+    let lastTap = 0;
+    canvas.addEventListener('click', async () => {
+      if (moved) return;
+      const now = performance.now();
+      if (now - lastTap < 280) {
+        try {
+          if (!document.fullscreenElement) await canvas.requestFullscreen();
+          else await document.exitFullscreen();
+        } catch (e) {}
+      }
+      lastTap = now;
+    });
+
+    window.addEventListener('resize', resize);
+
+    function animate() {
+      const time = (performance.now() - startTime) * 0.001;
+      if (!dragging) tAz += 0.0022;
+      az += (tAz - az) * 0.08;
+      elev += (tElev - elev) * 0.08;
+      updatePuzzle(time);
+
+      gl.uniform2f(U.u_res, width, height);
+      gl.uniform1f(U.u_time, time);
+      gl.uniform1f(U.u_az, az);
+      gl.uniform1f(U.u_elev, elev);
+      gl.uniform1f(U.u_camDist, P.camDist);
+      gl.uniform1f(U.u_cube, P.cube);
+      gl.uniform1f(U.u_envSpeed, P.envSpeed);
+      gl.uniform1f(U.u_contrast, P.contrast);
+      gl.uniform3fv(U.u_cubes, cubesBuf);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(animate);
+    }
+
+    resize();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
