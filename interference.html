@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Interference</title>
+  <style>
+    html, body {
+      margin: 0; width: 100%; height: 100%;
+      overflow: hidden; background: #000; touch-action: none;
+    }
+    canvas { display: block; width: 100vw; height: 100dvh; cursor: grab; }
+    canvas:active { cursor: grabbing; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const gl = canvas.getContext('webgl');
+
+    let width, height;
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth * dpr;
+      height = window.innerHeight * dpr;
+      canvas.width = width; canvas.height = height;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      gl.viewport(0, 0, width, height);
+    }
+
+    const vert = `
+      attribute vec2 a_position;
+      void main(){ gl_Position = vec4(a_position, 0.0, 1.0); }
+    `;
+
+    const frag = `
+      precision highp float;
+      uniform vec2  u_res;
+      uniform float u_time;
+      uniform float u_yaw, u_pitch;
+
+      mat3 rotY(float a){ float s=sin(a), c=cos(a); return mat3(c,0.0,-s, 0.0,1.0,0.0, s,0.0,c); }
+      mat3 rotX(float a){ float s=sin(a), c=cos(a); return mat3(1.0,0.0,0.0, 0.0,c,-s, 0.0,s,c); }
+
+      // regular dodecahedron: intersection of 6 face-normal slabs (golden-ratio dirs)
+      float sdDodeca(vec3 p, float r){
+        const float a = 0.5257311, b = 0.8506508;   // normalized (1, phi)
+        float d = abs(p.y * a + p.z * b);
+        d = max(d, abs(p.y * a - p.z * b));
+        d = max(d, abs(p.x * a + p.y * b));
+        d = max(d, abs(p.x * a - p.y * b));
+        d = max(d, abs(p.x * b + p.z * a));
+        d = max(d, abs(p.x * b - p.z * a));
+        return d - r;
+      }
+      mat3 R;
+      float map(vec3 p){ return sdDodeca(R * p, 0.62) - 0.03; }
+
+      vec3 calcNormal(vec3 p){
+        vec2 e = vec2(0.0012, 0.0);
+        return normalize(vec3(
+          map(p + e.xyy) - map(p - e.xyy),
+          map(p + e.yxy) - map(p - e.yxy),
+          map(p + e.yyx) - map(p - e.yyx)));
+      }
+      float march(vec3 ro, vec3 rd){
+        float t = 0.0;
+        for (int i = 0; i < 96; i++){
+          float d = map(ro + rd * t);
+          if (d < 0.0008) return t;
+          t += d;
+          if (t > 24.0) break;
+        }
+        return -1.0;
+      }
+
+      // op-art environment: undulating black/white lines wrap the surroundings
+      vec3 env(vec3 d){
+        float az = atan(d.z, d.x);                       // -pi..pi
+        float el = asin(clamp(d.y, -1.0, 1.0));          // -pi/2..pi/2
+        float warp = el * 8.0
+                   + 1.10 * sin(az * 3.0 + u_time * 0.40)
+                   + 0.50 * sin(az * 7.0 - u_time * 0.25)
+                   + 0.70 * sin((az + el) * 5.0 + u_time * 0.30);
+        float v = sin(warp);
+        float band = smoothstep(-0.12, 0.12, v);
+        return mix(vec3(0.02), vec3(1.35), band);        // black <-> bright white
+      }
+
+      void main(){
+        vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
+        R = rotX(u_pitch) * rotY(u_yaw);
+
+        vec3 ro = vec3(0.0, 0.0, -4.6);
+        vec3 rd = normalize(vec3(uv, 1.6));
+
+        vec3 col = vec3(0.0);
+        vec3 atten = vec3(1.0);
+        vec3 silver = vec3(0.98, 0.985, 0.99);   // near-perfect mirror
+
+        // mirror reflections (chrome bounces)
+        for (int b = 0; b < 5; b++){
+          float t = march(ro, rd);
+          // primary miss -> empty black background; reflection miss -> neon env
+          if (t < 0.0){ if (b > 0) col += atten * env(rd); break; }
+          vec3 p = ro + rd * t;
+          vec3 n = calcNormal(p);
+          float fres = 0.04 + 0.96 * pow(1.0 - max(0.0, dot(-rd, n)), 5.0);
+          if (b == 0) col += vec3(1.0) * pow(1.0 - max(0.0, dot(-rd, n)), 5.0) * 0.35; // bright rim
+          atten *= mix(silver, vec3(1.0), fres);
+          ro = p + n * 0.003;
+          rd = reflect(rd, n);
+          if (b == 4) col += atten * env(rd);   // bail out into the environment
+        }
+
+        // tone map + gamma + vignette
+        col = col / (1.0 + col);
+        col *= 1.0 - 0.25 * dot(uv, uv);
+        col = pow(clamp(col, 0.0, 1.0), vec3(0.4545));
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(type, src){
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+      return s;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vert));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1
+    ]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(prog, 'a_position');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+    const U = {};
+    ['u_res','u_time','u_yaw','u_pitch'].forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+    const startTime = performance.now();
+    let yaw = 0.6, pitch = -0.35;
+    let velYaw = 0.0045, velPitch = 0.0;       // angular velocity (radians/frame)
+    let dragging = false, lx = 0, ly = 0;
+    const IDLE = 0.0045;                        // gentle baseline spin
+
+    function render(){
+      if (!dragging){
+        yaw += velYaw;
+        pitch += velPitch;
+        pitch = Math.max(-1.4, Math.min(1.4, pitch));
+        velYaw += (IDLE - velYaw) * 0.015;       // inertia eases back to idle spin
+        velPitch *= 0.94;                        // pitch momentum fades to rest
+      }
+      const t = (performance.now() - startTime) * 0.001;
+      gl.uniform2f(U.u_res, width, height);
+      gl.uniform1f(U.u_time, t);
+      gl.uniform1f(U.u_yaw, yaw);
+      gl.uniform1f(U.u_pitch, pitch);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(render);
+    }
+
+    // ===== drag to rotate (with inertia), double-tap fullscreen =====
+    canvas.addEventListener('pointerdown', e => {
+      dragging = true; lx = e.clientX; ly = e.clientY;
+      velYaw = 0; velPitch = 0;
+    });
+    canvas.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      const dx = (e.clientX - lx) * 0.006;
+      const dy = (e.clientY - ly) * 0.006;
+      yaw += dx;
+      pitch = Math.max(-1.4, Math.min(1.4, pitch + dy));
+      velYaw = velYaw * 0.4 + dx * 0.6;          // smoothed throw velocity
+      velPitch = velPitch * 0.4 + dy * 0.6;
+      lx = e.clientX; ly = e.clientY;
+    });
+    canvas.addEventListener('pointerup', () => { dragging = false; });
+    canvas.addEventListener('pointercancel', () => { dragging = false; });
+
+    let lastTap = 0;
+    canvas.addEventListener('click', async () => {
+      const now = performance.now();
+      if (now - lastTap < 300){
+        try {
+          if (!document.fullscreenElement) await canvas.requestFullscreen();
+          else await document.exitFullscreen();
+        } catch (e) {}
+      }
+      lastTap = now;
+    });
+
+    window.addEventListener('resize', resize);
+    resize();
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
