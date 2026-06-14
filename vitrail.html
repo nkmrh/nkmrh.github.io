@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Vitrail</title>
+  <style>
+    html, body {
+      margin: 0; width: 100%; height: 100%;
+      overflow: hidden; background: #04060a; touch-action: none;
+    }
+    canvas { display: block; width: 100vw; height: 100dvh; cursor: crosshair; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const gl = canvas.getContext('webgl');
+
+    let width, height;
+    function resize(){
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth * dpr; height = window.innerHeight * dpr;
+      canvas.width = width; canvas.height = height;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      gl.viewport(0, 0, width, height);
+    }
+
+    const vert = `attribute vec2 a_position; void main(){ gl_Position = vec4(a_position,0.0,1.0); }`;
+
+    const frag = `
+      precision highp float;
+      uniform vec2  u_res;
+      uniform float u_time;
+      uniform vec2  u_drag;
+      uniform float u_density, u_pointMove, u_seam, u_edge;
+      uniform float u_hueShift, u_sat, u_interior, u_breath, u_vignette;
+
+      vec2 hash2(vec2 p){
+        p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+        return fract(sin(p) * 43758.5453);
+      }
+      float hash1(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 13758.21); }
+      vec3 pal(float h){ return 0.55 + u_sat * cos(6.28318 * (vec3(0.0, 0.33, 0.67) + h)); }
+
+      void main(){
+        vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
+        float t = u_time;
+        uv *= u_density;                             // cell density
+        uv += vec2(t * 0.04, t * 0.025) + u_drag;    // slow drift
+
+        vec2 ip = floor(uv), fp = fract(uv);
+
+        // pass 1: nearest cell point
+        float md = 8.0; vec2 mr, mg, cid;
+        for (int j = -1; j <= 1; j++){
+          for (int i = -1; i <= 1; i++){
+            vec2 g = vec2(float(i), float(j));
+            vec2 o = hash2(ip + g);
+            o = 0.5 + u_pointMove * sin(t * 0.5 + 6.28318 * o);   // drifting points
+            vec2 r = g + o - fp;
+            float d = dot(r, r);
+            if (d < md){ md = d; mr = r; mg = g; cid = ip + g; }
+          }
+        }
+        float f1 = sqrt(md);
+
+        // pass 2: distance to the nearest cell border
+        float mb = 8.0;
+        for (int j = -1; j <= 1; j++){
+          for (int i = -1; i <= 1; i++){
+            vec2 g = mg + vec2(float(i), float(j));
+            vec2 o = hash2(ip + g);
+            o = 0.5 + u_pointMove * sin(t * 0.5 + 6.28318 * o);
+            vec2 r = g + o - fp;
+            vec2 diff = r - mr;
+            if (dot(diff, diff) > 0.0001)
+              mb = min(mb, dot(0.5 * (mr + r), normalize(diff)));
+          }
+        }
+
+        // colour each cell from a soft palette (hue loops slowly via u_hueShift)
+        float hue = hash1(cid) + u_hueShift;
+        vec3 cc = pal(hue);
+
+        float interior = clamp(1.0 - u_interior * f1, 0.0, 1.0);   // brighter toward centre
+        float seam = smoothstep(0.0, u_seam, mb);                  // dark leading between cells
+        float edge = smoothstep(0.05, 0.0, mb);                    // glowing border
+
+        float breath = (1.0 - u_breath) + u_breath * (0.5 + 0.5 * sin(t * 0.2));
+        vec3 col = cc * (0.32 + 0.68 * interior) * seam * breath;
+        col += cc * edge * u_edge;                                 // soft border light
+        col += cc * 0.03;                                          // gentle ambient
+
+        vec2 vc = (gl_FragCoord.xy - 0.5*u_res) / u_res.y;
+        col *= 1.0 - u_vignette * dot(vc, vc);
+        col = pow(clamp(col, 0.0, 1.0), vec3(0.85));
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(type, src){
+      const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+      return s;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vert));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
+    gl.linkProgram(prog); gl.useProgram(prog);
+
+    const bufq = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufq);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(prog, 'a_position');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+    const U = {};
+    ['u_res','u_time','u_drag','u_density','u_pointMove','u_seam','u_edge',
+     'u_hueShift','u_sat','u_interior','u_breath','u_vignette']
+      .forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+    // fixed look
+    const P = {
+      speed: 0.82, density: 5.3, pointMove: 0.39, seam: 0.005, edge: 0.27,
+      hueShift: 0.47, sat: 0.60, interior: 0.59, breath: 0.13, vignette: 0.0,
+    };
+
+    const startTime = performance.now();
+    let dragX = 0, dragY = 0, tx = 0, ty = 0;
+
+    const HUE_RATE = 0.02;   // full colour loop ≈ 50s, independent of anim speed
+    function render(){
+      dragX += (tx - dragX) * 0.05; dragY += (ty - dragY) * 0.05;
+      const el = (performance.now() - startTime) * 0.001;
+      gl.uniform2f(U.u_res, width, height);
+      gl.uniform1f(U.u_time, el * P.speed);
+      gl.uniform2f(U.u_drag, dragX, dragY);
+      gl.uniform1f(U.u_density, P.density);
+      gl.uniform1f(U.u_pointMove, P.pointMove);
+      gl.uniform1f(U.u_seam, P.seam);
+      gl.uniform1f(U.u_edge, P.edge);
+      gl.uniform1f(U.u_hueShift, P.hueShift + el * HUE_RATE);   // slow continuous hue loop
+      gl.uniform1f(U.u_sat, P.sat);
+      gl.uniform1f(U.u_interior, P.interior);
+      gl.uniform1f(U.u_breath, P.breath);
+      gl.uniform1f(U.u_vignette, P.vignette);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(render);
+    }
+
+    function setT(e){ tx = (e.clientX / window.innerWidth - 0.5) * 3.0; ty = -(e.clientY / window.innerHeight - 0.5) * 3.0; }
+    canvas.addEventListener('pointermove', setT);
+    canvas.addEventListener('pointerdown', setT);
+
+    let lastTap = 0;
+    canvas.addEventListener('click', async () => {
+      const now = performance.now();
+      if (now - lastTap < 300){
+        try { if (!document.fullscreenElement) await canvas.requestFullscreen(); else await document.exitFullscreen(); } catch(e){}
+      }
+      lastTap = now;
+    });
+
+    window.addEventListener('resize', resize);
+    resize();
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
