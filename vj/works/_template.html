@@ -1,0 +1,227 @@
+<!doctype html>
+<!--
+  VJ work template.
+
+  新しい作品を作るときは、このファイルを works/your-work.html にコピーして
+  次の3ステップだけ編集すれば組み込まれます:
+
+    1) 下の <script id="vj-layer-protocol"> の "title" / "badge" / "controls" を編集。
+       各 control は { key, label, type, default, ... } を必ず持つこと
+       ("defaults" という別キーは使わない — default は control 内に書く)。
+       range は min/max/step、segmented は options:[{value,label}] を付ける。
+       ここに並べた control が、操作画面 (vj-control.html) の Layer パネルに自動で出ます。
+
+       ★ key は作品ごとに自由。好きな名前を付けてよい(下の例の名前に縛られない)。
+         唯一の特別キーは "bpm": これを control に入れた作品だけが、ミキサーの
+         Shared BPM / Tap Tempo Shared と連動する。テンポ連動が不要なら "bpm" は省略可。
+
+    2) draw() の中身を自分の絵に差し替える。state.<control.key> で各値を読めます。
+       ※ controls に書いた key は draw() で必ず使うこと(未使用の値は持たせない方針)。
+
+    3) vj-control.html の WORK_OPTIONS にこの作品を1行追加:
+         { src: "works/your-work.html", label: "Your Work" }
+
+  これ以外(slot 受け取り・状態同期・protocol 返信)のボイラープレートは
+  触らなくて大丈夫です。
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>VJ Work (template)</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <!-- ===== 1) ここを編集: この作品のメタ情報とコントロール ===== -->
+  <script id="vj-layer-protocol" type="application/json">
+    {
+      "id": "a",
+      "title": "Layer A",
+      "badge": "Template",
+      "controls": [
+        { "key": "speed", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
+        { "key": "scale", "label": "Scale", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
+        { "key": "bpm", "label": "BPM", "type": "range", "min": 40, "max": 220, "step": 1, "default": 120 },
+        { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 60 },
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 200 },
+        { "key": "intensity", "label": "Intensity", "type": "range", "min": 0, "max": 100, "step": 1, "default": 80 },
+        { "key": "motion", "label": "Motion", "type": "segmented", "default": "flow", "options": [
+          { "value": "flow", "label": "Flow" },
+          { "value": "pulse", "label": "Pulse" },
+          { "value": "cut", "label": "Cut" }
+        ] }
+      ]
+    }
+  </script>
+
+  <script>
+    /* ===== ボイラープレート: 通常は編集不要 ===== */
+    const layerProtocol = JSON.parse(document.getElementById("vj-layer-protocol").textContent);
+    const requestedSlot = new URLSearchParams(window.location.search).get("slot");
+    // "id" は slot 未指定時のフォールバックにのみ使われる(操作画面は常に slot を渡す)。
+    const layerSlot = requestedSlot === "a" || requestedSlot === "b" ? requestedSlot : layerProtocol.id;
+    const runtimeProtocol = {
+      ...layerProtocol,
+      id: layerSlot,
+      title: `Layer ${layerSlot.toUpperCase()}`
+    };
+    function postLayerProtocol() {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "vj-layer-protocol", protocol: runtimeProtocol }, "*");
+      }
+    }
+    postLayerProtocol();
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "request-vj-layer-protocol") postLayerProtocol();
+    });
+
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const protocolDefaults = (protocol) =>
+      (protocol.controls || []).reduce((acc, control) => {
+        acc[control.key] = control.default;
+        return acc;
+      }, {});
+    const state = { ...protocolDefaults(runtimeProtocol) };
+    let dpr = 1;
+
+    function requestStateFromHost() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return;
+      try {
+        host.postMessage({ type: "request-vj-state", role: "work", slot: layerSlot }, "*");
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+
+    function readStateFromHostWindow() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return null;
+      try {
+        return host.__vjState || null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function syncStateFromStorage() {
+      try {
+        const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
+        if (saved) applyLayer(saved[layerSlot]);
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+
+    function applyLayer(next) {
+      if (!next) return;
+      Object.assign(state, next);
+    }
+
+    function resize() {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(window.innerWidth * dpr);
+      canvas.height = Math.floor(window.innerHeight * dpr);
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function getGlobalTime(now) {
+      // 全レイヤーで共通の時間軸(出力と各プレビューの位相を揃える)。
+      return (performance.timeOrigin + now) * 0.001;
+    }
+
+    // BPM/Beat/Motion から拍の強さを返すヘルパー。draw() から使うと拍に同期できる。
+    function pulse(time) {
+      const phase = (time * state.bpm / 60) % 1;
+      const kick = Math.pow(1 - phase, 6);
+      if (state.motion === "cut") return phase < 0.5 ? 1 : 0.2;
+      if (state.motion === "pulse") return 0.7 + kick * state.beat / 80;
+      return 1 + kick * state.beat / 150;
+    }
+
+    /* ===== 2) ここを編集: 自分の絵を描く。state.<key> で各コントロール値を読む ===== */
+    function draw(now) {
+      const time = getGlobalTime(now);
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const cx = w * 0.5;
+      const cy = h * 0.5;
+      const speed = 0.2 + state.speed / 80;
+      const scale = 0.6 + state.scale / 80;
+      const beat = pulse(time);
+      const intensity = state.intensity / 100;
+
+      // 残像のためのフェード(自分の表現に合わせて変更可)。
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = "lighter";
+
+      const count = 24;
+      for (let i = 0; i < count; i++) {
+        const ring = i / count;
+        const angle = time * speed + ring * Math.PI * 2;
+        const radius = Math.min(w, h) * 0.4 * scale * (0.3 + ring) * beat;
+        const x = cx + Math.cos(angle) * radius;
+        const y = cy + Math.sin(angle) * radius;
+        const size = Math.min(w, h) * 0.05 * (0.5 + ring) * beat;
+        const hue = (state.hue + i * 10 + time * state.speed) % 360;
+        const gradient = ctx.createRadialGradient(x, y, 0, x, y, size);
+        gradient.addColorStop(0, `hsla(${hue}, 95%, 65%, ${0.35 * intensity})`);
+        gradient.addColorStop(1, "hsla(0, 0%, 0%, 0)");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      requestAnimationFrame(draw);
+    }
+    /* ===== ここまでが描画 ===== */
+
+    /* ===== ボイラープレート: 状態の受信(編集不要) ===== */
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "vj-state" && event.data.state) {
+        applyLayer(event.data.state[layerSlot]);
+      }
+    });
+
+    window.addEventListener("storage", () => {
+      syncStateFromStorage();
+    });
+
+    function syncStateFromHostWindow() {
+      const hostState = readStateFromHostWindow();
+      if (hostState) applyLayer(hostState[layerSlot]);
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+    requestAnimationFrame(draw);
+    syncStateFromHostWindow();
+    syncStateFromStorage();
+    requestStateFromHost();
+    window.setInterval(syncStateFromHostWindow, 120);
+    window.setInterval(syncStateFromStorage, 120);
+  </script>
+</body>
+</html>
