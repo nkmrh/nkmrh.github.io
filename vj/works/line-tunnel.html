@@ -27,18 +27,19 @@
       "id": "b",
       "title": "Layer B",
       "badge": "Line tunnel",
-      "defaults": {
-        "bpm": 93,
-        "beat": 65,
-        "speed": 45,
-        "scale": 54,
-        "twist": 48,
-        "hue": 310,
-        "intensity": 82,
-        "motion": "flow"
-      },
       "controls": [
-        { "key": "twist", "label": "Twist", "type": "range", "min": 0, "max": 100, "step": 1 }
+        { "key": "bpm", "label": "BPM", "type": "range", "min": 40, "max": 220, "step": 1, "default": 93 },
+        { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 65 },
+        { "key": "speed", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 45 },
+        { "key": "scale", "label": "Scale", "type": "range", "min": 0, "max": 100, "step": 1, "default": 54 },
+        { "key": "twist", "label": "Twist", "type": "range", "min": 0, "max": 100, "step": 1, "default": 48 },
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 310 },
+        { "key": "intensity", "label": "Intensity", "type": "range", "min": 0, "max": 100, "step": 1, "default": 82 },
+        { "key": "motion", "label": "Motion", "type": "segmented", "default": "flow", "options": [
+          { "value": "flow", "label": "Flow" },
+          { "value": "pulse", "label": "Pulse" },
+          { "value": "cut", "label": "Cut" }
+        ] }
       ]
     }
   </script>
@@ -62,7 +63,12 @@
     });
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
-    const state = { ...runtimeProtocol.defaults };
+    const protocolDefaults = (protocol) =>
+      (protocol.controls || []).reduce((acc, control) => {
+        acc[control.key] = control.default;
+        return acc;
+      }, {});
+    const state = { ...protocolDefaults(runtimeProtocol) };
     function requestStateFromHost() {
       const host = window.parent !== window ? window.parent : window.opener;
       if (!host) return;

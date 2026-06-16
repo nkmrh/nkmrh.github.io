@@ -27,18 +27,19 @@
       "id": "a",
       "title": "Layer A",
       "badge": "Plasma bloom",
-      "defaults": {
-        "bpm": 124,
-        "beat": 55,
-        "speed": 50,
-        "scale": 50,
-        "spread": 62,
-        "hue": 185,
-        "intensity": 80,
-        "motion": "flow"
-      },
       "controls": [
-        { "key": "spread", "label": "Spread", "type": "range", "min": 0, "max": 100, "step": 1 }
+        { "key": "bpm", "label": "BPM", "type": "range", "min": 40, "max": 220, "step": 1, "default": 124 },
+        { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 55 },
+        { "key": "speed", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
+        { "key": "scale", "label": "Scale", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
+        { "key": "spread", "label": "Spread", "type": "range", "min": 0, "max": 100, "step": 1, "default": 62 },
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 185 },
+        { "key": "intensity", "label": "Intensity", "type": "range", "min": 0, "max": 100, "step": 1, "default": 80 },
+        { "key": "motion", "label": "Motion", "type": "segmented", "default": "flow", "options": [
+          { "value": "flow", "label": "Flow" },
+          { "value": "pulse", "label": "Pulse" },
+          { "value": "cut", "label": "Cut" }
+        ] }
       ]
     }
   </script>
@@ -62,7 +63,12 @@
     });
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
-    const state = { ...runtimeProtocol.defaults };
+    const protocolDefaults = (protocol) =>
+      (protocol.controls || []).reduce((acc, control) => {
+        acc[control.key] = control.default;
+        return acc;
+      }, {});
+    const state = { ...protocolDefaults(runtimeProtocol) };
     let dpr = 1;
 
     function requestStateFromHost() {

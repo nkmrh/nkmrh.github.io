@@ -673,10 +673,18 @@
       return matchedKey ? workProtocolMap[matchedKey] : null;
     }
 
+    function protocolDefaults(protocol) {
+      const defaults = {};
+      (protocol.controls || []).forEach((control) => {
+        defaults[control.key] = control.default;
+      });
+      return defaults;
+    }
+
     function buildDefaultState(protocols) {
       const defaults = cloneJson(BASE_STATE);
       protocols.forEach((protocol) => {
-        defaults[protocol.id] = { ...protocol.defaults };
+        defaults[protocol.id] = protocolDefaults(protocol);
       });
       return defaults;
     }
@@ -754,7 +762,7 @@
 
       return `
         <div class="control">
-          <label for="${protocol.id}-${control.key}">${control.label} <output data-out="${keyPath}">${protocol.defaults[control.key]}</output></label>
+          <label for="${protocol.id}-${control.key}">${control.label} <output data-out="${keyPath}">${control.default}</output></label>
           <input
             id="${protocol.id}-${control.key}"
             data-key="${keyPath}"
@@ -762,54 +770,58 @@
             min="${control.min}"
             max="${control.max}"
             step="${control.step}"
-            value="${protocol.defaults[control.key]}"
+            value="${control.default}"
           />
         </div>
       `;
     }
 
-    function bindDynamicControls() {
-      document.querySelectorAll("input[data-key], select[data-key]").forEach((control) => {
-        control.addEventListener("input", () => {
-          const value = control.type === "range" ? Number(control.value) : control.value;
-          setPath(state, control.dataset.key, value);
-          if (state.sharedBpm.enabled && (control.dataset.key.endsWith(".bpm") || control.dataset.key === "sharedBpm.bpm")) {
-            state.sharedBpm.bpm = clampBpm(value);
-          }
-          updateReadouts();
-          send();
-        });
+    // Bound once via event delegation so re-rendering the layer panels never
+    // re-attaches listeners to the static mixer controls (which would make e.g.
+    // Tap Tempo register multiple times per click).
+    function bindControlDelegation() {
+      document.addEventListener("input", (event) => {
+        const control = event.target;
+        if (!control || !control.matches || !control.matches("input[data-key], select[data-key]")) return;
+        const value = control.type === "range" ? Number(control.value) : control.value;
+        setPath(state, control.dataset.key, value);
+        if (state.sharedBpm.enabled && control.dataset.key.endsWith(".bpm")) {
+          state.sharedBpm.bpm = clampBpm(value);
+        }
+        updateReadouts();
+        send();
       });
 
-      document.querySelectorAll(".switch-row button").forEach((button) => {
-        button.addEventListener("click", () => {
-          const row = button.closest(".switch-row");
-          setPath(state, row.dataset.key, button.dataset.value);
-          updateReadouts();
-          send();
-        });
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest && event.target.closest(".switch-row button");
+        if (!button) return;
+        const row = button.closest(".switch-row");
+        setPath(state, row.dataset.key, button.dataset.value);
+        updateReadouts();
+        send();
       });
 
-      document.querySelectorAll("[data-tap]").forEach((button) => {
-        button.addEventListener("click", () => {
-          const layer = button.dataset.tap;
-          if (!tapTimes[layer]) tapTimes[layer] = [];
-          const now = performance.now();
-          tapTimes[layer] = tapTimes[layer].filter((time) => now - time < 4500);
-          tapTimes[layer].push(now);
-          if (tapTimes[layer].length < 2) return;
-          const intervals = tapTimes[layer].slice(1).map((time, index) => time - tapTimes[layer][index]);
-          const average = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
-          const tappedBpm = clampBpm(60000 / average);
-          if (layer === "shared") {
-            state.sharedBpm.bpm = tappedBpm;
-          } else {
-            state[layer].bpm = tappedBpm;
-            if (state.sharedBpm.enabled) state.sharedBpm.bpm = tappedBpm;
-          }
-          updateReadouts();
-          send();
-        });
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest && event.target.closest("[data-tap]");
+        if (!button) return;
+        const layer = button.dataset.tap;
+        if (!tapTimes[layer]) tapTimes[layer] = [];
+        const now = performance.now();
+        tapTimes[layer] = tapTimes[layer].filter((time) => now - time < 4500);
+        tapTimes[layer].push(now);
+        if (tapTimes[layer].length < 2) return;
+        const intervals = tapTimes[layer].slice(1).map((time, index) => time - tapTimes[layer][index]);
+        const average = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
+        const tappedBpm = clampBpm(60000 / average);
+        if (layer === "shared") {
+          // updateReadouts() -> syncSharedBpm() propagates to the layers when enabled.
+          state.sharedBpm.bpm = tappedBpm;
+        } else {
+          state[layer].bpm = tappedBpm;
+          if (state.sharedBpm.enabled) state.sharedBpm.bpm = tappedBpm;
+        }
+        updateReadouts();
+        send();
       });
     }
 
@@ -1280,9 +1292,8 @@
       if (!rawProtocol) throw new Error(`Unknown work source: ${sourceSrc}`);
       const protocol = normalizeProtocol(rawProtocol, slot, sourceSrc);
       layerProtocols[index] = protocol;
-      state[slot] = { ...protocol.defaults };
+      state[slot] = protocolDefaults(protocol);
       renderLayerPanels(layerProtocols);
-      bindDynamicControls();
       updateReadouts();
       send();
     }
@@ -1311,7 +1322,7 @@
         state = createInitialState(layerProtocols);
         window.__vjState = state;
         state.sources = { ...initialSources, ...(state.sources || {}) };
-        bindDynamicControls();
+        bindControlDelegation();
         updateReadouts();
         previewFrame.addEventListener("load", () => {
           postStateToWindow(previewFrame.contentWindow);
