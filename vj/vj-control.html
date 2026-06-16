@@ -174,13 +174,6 @@
       font-size: 12px;
     }
 
-    .preview-actions {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-
     .preview-frame-wrap {
       position: relative;
       aspect-ratio: 16 / 9;
@@ -197,25 +190,6 @@
       border: 0;
       display: block;
       background: #000;
-    }
-
-    .preview-video {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      border: 0;
-      display: none;
-      background: #000;
-      object-fit: cover;
-    }
-
-    .preview-video.active {
-      display: block;
-    }
-
-    .preview-frame.hidden {
-      visibility: hidden;
     }
 
     .preview-note {
@@ -392,20 +366,10 @@
         <div class="panel-head">
           <h2>Preview</h2>
           <div class="preview-meta">
-            <span>Live mirror of output</span>
-            <div class="preview-actions">
-              <button class="button" id="mirrorOutput" type="button">Mirror Output</button>
-            </div>
+            <span>Live preview of output</span>
           </div>
         </div>
         <div class="preview-frame-wrap">
-          <video
-            class="preview-video"
-            id="previewVideo"
-            autoplay
-            muted
-            playsinline
-          ></video>
           <iframe
             class="preview-frame"
             id="previewFrame"
@@ -453,6 +417,10 @@
         <div class="control wide-2">
           <label for="mix">A / B Mix <output data-out="mix">50</output></label>
           <input id="mix" data-key="mix" type="range" min="0" max="100" step="1" value="50" />
+        </div>
+        <div class="control">
+          <label for="switchAb">A / B Switch</label>
+          <button class="button" id="switchAb" type="button">Fade to B</button>
         </div>
         <div class="control">
           <label for="blendMode">Blend</label>
@@ -539,11 +507,10 @@
     const layerPanels = document.getElementById("layerPanels");
     const protocolLoadersContainer = document.getElementById("protocolLoaders");
     const previewFrame = document.getElementById("previewFrame");
-    const previewVideo = document.getElementById("previewVideo");
     const previewNote = document.getElementById("previewNote");
-    const mirrorButton = document.getElementById("mirrorOutput");
     const autoMixToggle = document.getElementById("autoMixToggle");
     const sharedBpmToggle = document.getElementById("sharedBpmToggle");
+    const switchAbButton = document.getElementById("switchAb");
     const mixerSection = document.querySelector(".mixer");
     const sourcePreviewFrames = {
       a: document.getElementById("sourcePreviewA"),
@@ -553,8 +520,8 @@
     let layerProtocols = [];
     let workProtocolMap = {};
     const tapTimes = { shared: [] };
-    let mirrorStream = null;
     let lastAutoMixSentAt = 0;
+    let mixTransition = null;
     let outputWindow = null;
 
     function cloneJson(value) {
@@ -1147,49 +1114,6 @@
       document.getElementById("status").textContent = state.blackout ? "Blackout is active." : "Streaming controls to output.";
     }
 
-    function stopMirror() {
-      if (mirrorStream) {
-        mirrorStream.getTracks().forEach((track) => track.stop());
-        mirrorStream = null;
-      }
-      previewVideo.srcObject = null;
-      previewVideo.classList.remove("active");
-      previewFrame.classList.remove("hidden");
-      previewNote.textContent = "Embedded preview";
-      mirrorButton.textContent = "Mirror Output";
-    }
-
-    async function startMirror() {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-        previewNote.textContent = "Screen Capture API is not available in this browser.";
-        return;
-      }
-
-      try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            frameRate: { ideal: 30, max: 60 }
-          },
-          audio: false
-        });
-        if (mirrorStream) stopMirror();
-        mirrorStream = stream;
-        previewVideo.srcObject = stream;
-        previewVideo.classList.add("active");
-        previewFrame.classList.add("hidden");
-        previewNote.textContent = "Mirroring output window";
-        mirrorButton.textContent = "Stop Mirror";
-        const [track] = stream.getVideoTracks();
-        if (track) {
-          track.addEventListener("ended", () => {
-            stopMirror();
-          }, { once: true });
-        }
-      } catch (error) {
-        previewNote.textContent = "Mirror permission was canceled.";
-      }
-    }
-
     function updateReadouts() {
       syncSharedBpm();
       document.querySelectorAll("[data-out]").forEach((node) => {
@@ -1210,6 +1134,8 @@
       autoMixToggle.classList.toggle("active", state.autoMix.enabled);
       sharedBpmToggle.textContent = state.sharedBpm.enabled ? "On" : "Off";
       sharedBpmToggle.classList.toggle("active", state.sharedBpm.enabled);
+      const switchTarget = state.mix < 50 ? "B" : "A";
+      switchAbButton.textContent = `${state.autoMix.shape === "cut" ? "Cut" : "Fade"} to ${switchTarget}`;
       updateSourceUi();
     }
 
@@ -1237,7 +1163,54 @@
       return Math.max(0, Math.min(100, Math.round(50 + wave * 50 * depth)));
     }
 
+    // Manual A/B Switch transition. Curve follows the Auto Mix Shape:
+    // cut = instant, triangle = linear ramp, smooth = eased.
+    function shapeCurve(t, shape) {
+      if (shape === "triangle") return t;
+      return t * t * (3 - 2 * t); // smoothstep
+    }
+
+    function switchTransitionMs() {
+      // One beat at the current (shared) BPM, so it stays musical.
+      return Math.max(150, 60000 / getAutoMixBpm());
+    }
+
+    function startMixTransition(target) {
+      if (state.autoMix.shape === "cut") {
+        mixTransition = null;
+        state.mix = target;
+        updateReadouts();
+        send();
+        return;
+      }
+      mixTransition = {
+        from: state.mix,
+        to: target,
+        startMs: performance.now(),
+        durationMs: switchTransitionMs(),
+        shape: state.autoMix.shape
+      };
+    }
+
     function animateAutoMix(now) {
+      if (mixTransition) {
+        const t = Math.min(1, (now - mixTransition.startMs) / mixTransition.durationMs);
+        const eased = shapeCurve(t, mixTransition.shape);
+        const value = Math.round(mixTransition.from + (mixTransition.to - mixTransition.from) * eased);
+        if (value !== state.mix) {
+          state.mix = value;
+          updateReadouts();
+          send({ persist: false });
+        }
+        if (t >= 1) {
+          state.mix = mixTransition.to;
+          mixTransition = null;
+          updateReadouts();
+          send();
+        }
+        requestAnimationFrame(animateAutoMix);
+        return; // pause Auto Mix while a manual switch is transitioning
+      }
       if (state.autoMix.enabled) {
         const nextMix = getAutoMixValue(now);
         if (nextMix !== state.mix && now - lastAutoMixSentAt > 33) {
@@ -1271,18 +1244,16 @@
       send();
     });
 
-    mirrorButton.addEventListener("click", async () => {
-      if (mirrorStream) {
-        stopMirror();
-        return;
-      }
-      await startMirror();
-    });
-
     document.getElementById("blackout").addEventListener("click", () => {
       state.blackout = !state.blackout;
       updateReadouts();
       send();
+    });
+
+    switchAbButton.addEventListener("click", () => {
+      // Switch to whichever layer is currently NOT dominant, using the
+      // Shape-dependent transition (cut = instant, otherwise a fade).
+      startMixTransition(state.mix < 50 ? 100 : 0);
     });
 
     document.getElementById("reset").addEventListener("click", () => {
@@ -1307,10 +1278,6 @@
         }
         postStateToWindow(event.source);
       }
-    });
-
-    window.addEventListener("beforeunload", () => {
-      stopMirror();
     });
 
     async function reloadSlotProtocol(slot, sourceSrc) {
