@@ -19,6 +19,9 @@
       background: #000;
       filter: brightness(var(--master, 1));
       transition: filter 90ms linear;
+      /* Keep the blend group on the stage so iOS Safari doesn't re-isolate the
+         layers (and flicker) every time the crossfade opacity changes. */
+      isolation: isolate;
     }
 
     iframe {
@@ -29,6 +32,11 @@
       border: 0;
       pointer-events: none;
       background: transparent;
+      /* Pin each layer to a stable compositing layer; without this iOS Safari
+         tears down / rebuilds the layer as opacity nears 0 or 1, which flickers. */
+      will-change: opacity;
+      -webkit-backface-visibility: hidden;
+      backface-visibility: hidden;
     }
 
     #layerA {

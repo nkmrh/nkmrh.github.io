@@ -190,6 +190,11 @@
       border: 0;
       display: block;
       background: #000;
+      /* Pin the embedded preview to its own compositing layer; the nested,
+         scaled-down blend flickers on iOS Safari without this. */
+      transform: translateZ(0);
+      -webkit-backface-visibility: hidden;
+      backface-visibility: hidden;
     }
 
     .preview-note {
@@ -872,6 +877,7 @@
       background: #000;
       filter: brightness(var(--master, 1));
       transition: filter 90ms linear;
+      isolation: isolate;
     }
     iframe {
       position: absolute;
@@ -881,6 +887,9 @@
       border: 0;
       pointer-events: none;
       background: transparent;
+      will-change: opacity;
+      -webkit-backface-visibility: hidden;
+      backface-visibility: hidden;
     }
     #layerA { opacity: var(--opacity-a, 0.5); }
     #layerB {
