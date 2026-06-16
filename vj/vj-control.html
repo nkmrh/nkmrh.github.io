@@ -511,6 +511,8 @@
     const autoMixToggle = document.getElementById("autoMixToggle");
     const sharedBpmToggle = document.getElementById("sharedBpmToggle");
     const switchAbButton = document.getElementById("switchAb");
+    const mixSlider = document.getElementById("mix");
+    const mixOutput = document.querySelector('[data-out="mix"]');
     const mixerSection = document.querySelector(".mixer");
     const sourcePreviewFrames = {
       a: document.getElementById("sourcePreviewA"),
@@ -1109,9 +1111,26 @@
     // via window.__vjState polling + broadcastState() postMessages.
     function send({ persist = true } = {}) {
       window.__vjState = state;
-      if (persist) localStorage.setItem("vj-state", JSON.stringify(state));
+      if (persist) {
+        localStorage.setItem("vj-state", JSON.stringify(state));
+        // Skipped on Auto Mix / Switch frames (persist:false) to avoid per-frame
+        // DOM writes that jank the preview on mobile.
+        document.getElementById("status").textContent = state.blackout ? "Blackout is active." : "Streaming controls to output.";
+      }
       broadcastState();
-      document.getElementById("status").textContent = state.blackout ? "Blackout is active." : "Streaming controls to output.";
+    }
+
+    function switchLabel() {
+      return `${state.autoMix.shape === "cut" ? "Cut" : "Fade"} to ${state.mix < 50 ? "B" : "A"}`;
+    }
+
+    // Lightweight per-frame update for the Auto Mix / Switch loop. Avoids the full
+    // updateReadouts() document sweep, which is too heavy to run every frame on
+    // mobile (iOS Safari) and starves the preview iframe.
+    function reflectMix() {
+      if (mixOutput) mixOutput.textContent = state.mix;
+      if (mixSlider && document.activeElement !== mixSlider) mixSlider.value = state.mix;
+      switchAbButton.textContent = switchLabel();
     }
 
     function updateReadouts() {
@@ -1134,8 +1153,7 @@
       autoMixToggle.classList.toggle("active", state.autoMix.enabled);
       sharedBpmToggle.textContent = state.sharedBpm.enabled ? "On" : "Off";
       sharedBpmToggle.classList.toggle("active", state.sharedBpm.enabled);
-      const switchTarget = state.mix < 50 ? "B" : "A";
-      switchAbButton.textContent = `${state.autoMix.shape === "cut" ? "Cut" : "Fade"} to ${switchTarget}`;
+      switchAbButton.textContent = switchLabel();
       updateSourceUi();
     }
 
@@ -1199,13 +1217,13 @@
         const value = Math.round(mixTransition.from + (mixTransition.to - mixTransition.from) * eased);
         if (value !== state.mix) {
           state.mix = value;
-          updateReadouts();
+          reflectMix();
           send({ persist: false });
         }
         if (t >= 1) {
           state.mix = mixTransition.to;
           mixTransition = null;
-          updateReadouts();
+          reflectMix();
           send();
         }
         requestAnimationFrame(animateAutoMix);
@@ -1215,7 +1233,7 @@
         const nextMix = getAutoMixValue(now);
         if (nextMix !== state.mix && now - lastAutoMixSentAt > 33) {
           state.mix = nextMix;
-          updateReadouts();
+          reflectMix();
           send({ persist: false });
           lastAutoMixSentAt = now;
         }
