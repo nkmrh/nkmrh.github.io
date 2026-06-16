@@ -145,6 +145,12 @@
     }
 
     function syncStateFromStorage() {
+      // localStorage is intentionally NOT written on every Auto Mix frame, so it
+      // lags during Auto Mix. When a live host (control window) is reachable, use
+      // that instead — applying the stale stored state here fights the live
+      // postMessage/host updates and makes the preview flicker. Only fall back to
+      // localStorage when there is no host (standalone output tab).
+      if (readStateFromHostWindow()) return;
       try {
         const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
         if (saved) applyState(saved);
