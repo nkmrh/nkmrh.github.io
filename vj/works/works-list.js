@@ -8,5 +8,9 @@ window.VJ_WORKS = [
   {
     "src": "works/plasma-bloom.html",
     "label": "Plasma bloom"
+  },
+  {
+    "src": "works/wave-grid.html",
+    "label": "Wave grid"
   }
 ];
