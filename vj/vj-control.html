@@ -875,7 +875,6 @@
       position: fixed;
       inset: 0;
       background: #000;
-      filter: brightness(var(--master, 1));
       transition: filter 90ms linear;
       isolation: isolate;
     }
@@ -981,7 +980,7 @@
       stage.style.setProperty("--opacity-a", 1 - mix);
       stage.style.setProperty("--opacity-b", mix);
       stage.style.setProperty("--blend", state.blendMode || "screen");
-      stage.style.setProperty("--master", master);
+      stage.style.filter = master === 1 ? "none" : "brightness(" + master + ")";
       blackout.classList.toggle("active", Boolean(state.blackout));
       if (state.sources) {
         const nextSourceA = state.sources.a ? buildSlottedWorkSrc("a", state.sources.a) : null;
