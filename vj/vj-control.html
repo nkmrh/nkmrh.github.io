@@ -1114,9 +1114,13 @@
       state.b.bpm = bpm;
     }
 
-    function send() {
+    // persist:false skips the synchronous localStorage write — used by the Auto Mix
+    // animation loop, which runs ~30x/sec and would otherwise flood localStorage and
+    // storm "storage" events to the output/preview windows. State still reaches them
+    // via window.__vjState polling + broadcastState() postMessages.
+    function send({ persist = true } = {}) {
       window.__vjState = state;
-      localStorage.setItem("vj-state", JSON.stringify(state));
+      if (persist) localStorage.setItem("vj-state", JSON.stringify(state));
       broadcastState();
       document.getElementById("status").textContent = state.blackout ? "Blackout is active." : "Streaming controls to output.";
     }
@@ -1217,7 +1221,7 @@
         if (nextMix !== state.mix && now - lastAutoMixSentAt > 33) {
           state.mix = nextMix;
           updateReadouts();
-          send();
+          send({ persist: false });
           lastAutoMixSentAt = now;
         }
       }
