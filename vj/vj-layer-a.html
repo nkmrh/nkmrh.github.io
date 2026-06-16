@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>VJ Layer A</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const channel = new BroadcastChannel("browser-vj-control");
+    const state = { bpm: 124, beat: 55, speed: 50, scale: 50, hue: 185, intensity: 80, motion: "flow" };
+    let dpr = 1;
+
+    function resize() {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(window.innerWidth * dpr);
+      canvas.height = Math.floor(window.innerHeight * dpr);
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function applyLayer(next) {
+      if (!next) return;
+      Object.assign(state, next);
+    }
+
+    function pulse(time) {
+      const phase = (time * state.bpm / 60) % 1;
+      const kick = Math.pow(1 - phase, 6);
+      if (state.motion === "cut") return phase < 0.5 ? 1 : 0.18;
+      if (state.motion === "pulse") return 0.72 + kick * state.beat / 80;
+      return 1 + kick * state.beat / 150;
+    }
+
+    function draw(now) {
+      const time = now * 0.001;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const cx = w * 0.5;
+      const cy = h * 0.5;
+      const speed = 0.18 + state.speed / 80;
+      const scale = 0.7 + state.scale / 80;
+      const beat = pulse(time);
+      const intensity = state.intensity / 100;
+
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = "lighter";
+
+      for (let i = 0; i < 34; i++) {
+        const ring = i / 34;
+        const angle = time * speed * (0.25 + ring) + i * 0.74;
+        const radius = Math.min(w, h) * (0.08 + ring * 0.58) * scale * beat;
+        const wobble = Math.sin(time * speed * 1.7 + i * 1.9) * 0.18;
+        const x = cx + Math.cos(angle + wobble) * radius * 0.82;
+        const y = cy + Math.sin(angle * 1.17 - wobble) * radius * 0.62;
+        const size = Math.min(w, h) * (0.08 + ring * 0.09) * beat;
+        const hue = (state.hue + i * 8 + time * state.speed * 2) % 360;
+        const gradient = ctx.createRadialGradient(x, y, 0, x, y, size);
+        gradient.addColorStop(0, `hsla(${hue}, 95%, 68%, ${0.23 * intensity})`);
+        gradient.addColorStop(0.38, `hsla(${(hue + 36) % 360}, 90%, 54%, ${0.11 * intensity})`);
+        gradient.addColorStop(1, "hsla(0, 0%, 0%, 0)");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.globalCompositeOperation = "screen";
+      for (let i = 0; i < 18; i++) {
+        const angle = i * Math.PI * 2 / 18 + time * speed * 0.35;
+        const hue = (state.hue + 120 + i * 5) % 360;
+        ctx.strokeStyle = `hsla(${hue}, 95%, 72%, ${0.03 + 0.05 * intensity})`;
+        ctx.lineWidth = 1.4 + beat * 2.2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.bezierCurveTo(
+          cx + Math.cos(angle) * w * 0.18,
+          cy + Math.sin(angle * 1.4) * h * 0.22,
+          cx + Math.cos(angle + time * 0.31) * w * 0.46,
+          cy + Math.sin(angle - time * 0.24) * h * 0.44,
+          cx + Math.cos(angle) * w,
+          cy + Math.sin(angle) * h
+        );
+        ctx.stroke();
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    channel.onmessage = (event) => {
+      if (event.data && event.data.type === "state") applyLayer(event.data.state.a);
+    };
+
+    try {
+      const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
+      if (saved) applyLayer(saved.a);
+    } catch (error) {
+      console.warn(error);
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+    requestAnimationFrame(draw);
+    channel.postMessage({ type: "request-state" });
+  </script>
+</body>
+</html>

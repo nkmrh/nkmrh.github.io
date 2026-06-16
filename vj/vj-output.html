@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>VJ Output</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .stage {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      filter: brightness(var(--master, 1));
+      transition: filter 90ms linear;
+    }
+
+    iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      pointer-events: none;
+      background: transparent;
+    }
+
+    #layerA {
+      opacity: var(--opacity-a, 0.5);
+    }
+
+    #layerB {
+      opacity: var(--opacity-b, 0.5);
+      mix-blend-mode: var(--blend, screen);
+    }
+
+    .blackout {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      opacity: 0;
+      transition: opacity 80ms linear;
+      pointer-events: none;
+    }
+
+    .blackout.active {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <main class="stage" id="stage">
+    <iframe id="layerA" title="Layer A" src="vj-layer-a.html"></iframe>
+    <iframe id="layerB" title="Layer B" src="vj-layer-b.html"></iframe>
+  </main>
+  <div class="blackout" id="blackout"></div>
+
+  <script>
+    const channel = new BroadcastChannel("browser-vj-control");
+    const stage = document.getElementById("stage");
+    const blackout = document.getElementById("blackout");
+
+    function applyState(state) {
+      const mix = Math.max(0, Math.min(100, Number(state.mix))) / 100;
+      const master = Math.max(0, Number(state.master)) / 100;
+      stage.style.setProperty("--opacity-a", 1 - mix);
+      stage.style.setProperty("--opacity-b", mix);
+      stage.style.setProperty("--blend", state.blendMode || "screen");
+      stage.style.setProperty("--master", master);
+      blackout.classList.toggle("active", Boolean(state.blackout));
+    }
+
+    channel.onmessage = (event) => {
+      if (event.data && event.data.type === "state") applyState(event.data.state);
+    };
+
+    try {
+      const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
+      if (saved) applyState(saved);
+    } catch (error) {
+      console.warn(error);
+    }
+
+    channel.postMessage({ type: "request-state" });
+  </script>
+</body>
+</html>

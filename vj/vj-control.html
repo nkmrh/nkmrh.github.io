@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>VJ Control</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101114;
+      --panel: #17191f;
+      --line: #2c3038;
+      --text: #f4f1ea;
+      --muted: #a9b0ba;
+      --accent: #65d6ad;
+      --accent-2: #ffcf5a;
+      --danger: #ff6f87;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.04), transparent 260px),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      letter-spacing: 0;
+    }
+
+    body {
+      padding: 18px;
+    }
+
+    button, input, select {
+      font: inherit;
+    }
+
+    .shell {
+      max-width: 1240px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .status {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .button {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      background: #22262e;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0 13px;
+      cursor: pointer;
+    }
+
+    .button.primary {
+      border-color: rgba(101, 214, 173, 0.45);
+      background: #1e3a34;
+    }
+
+    .button:active {
+      transform: translateY(1px);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .mixer {
+      grid-column: 1 / -1;
+      border: 1px solid var(--line);
+      background: rgba(23, 25, 31, 0.96);
+      border-radius: 8px;
+      padding: 14px;
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px) minmax(180px, 240px);
+      gap: 14px;
+      align-items: end;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      background: rgba(23, 25, 31, 0.96);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .panel-head {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: baseline;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .badge {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .controls {
+      padding: 12px 14px 14px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 14px;
+    }
+
+    .control {
+      min-width: 0;
+    }
+
+    .control.wide {
+      grid-column: 1 / -1;
+    }
+
+    label {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 7px;
+    }
+
+    output {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    input[type="number"],
+    select {
+      width: 100%;
+      height: 36px;
+      border: 1px solid var(--line);
+      background: #101218;
+      color: var(--text);
+      border-radius: 6px;
+      padding: 0 9px;
+    }
+
+    .tap {
+      width: 100%;
+      height: 52px;
+      border: 1px solid rgba(255, 207, 90, 0.42);
+      background: #302818;
+      color: var(--text);
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .switch-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .switch-row button {
+      flex: 1 1 92px;
+      min-height: 34px;
+      border-radius: 7px;
+      border: 1px solid var(--line);
+      background: #11141a;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .switch-row button.active {
+      color: var(--text);
+      border-color: rgba(101, 214, 173, 0.55);
+      background: #1d352f;
+    }
+
+    @media (max-width: 860px) {
+      body { padding: 12px; }
+      header { align-items: flex-start; flex-direction: column; }
+      .actions { justify-content: flex-start; }
+      .grid { grid-template-columns: 1fr; }
+      .mixer { grid-template-columns: 1fr; }
+      .controls { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <h1>VJ Control</h1>
+        <div class="status" id="status">Ready. Open the output page on a projector or second display.</div>
+      </div>
+      <div class="actions">
+        <button class="button primary" id="openOutput" type="button">Open Output</button>
+        <button class="button" id="blackout" type="button">Blackout</button>
+        <button class="button" id="reset" type="button">Reset</button>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section class="mixer" aria-label="Mixer">
+        <div class="control">
+          <label for="mix">A / B Mix <output data-out="mix">50</output></label>
+          <input id="mix" data-key="mix" type="range" min="0" max="100" step="1" value="50" />
+        </div>
+        <div class="control">
+          <label for="blendMode">Blend</label>
+          <select id="blendMode" data-key="blendMode">
+            <option value="screen">Screen</option>
+            <option value="lighten">Lighten</option>
+            <option value="multiply">Multiply</option>
+            <option value="difference">Difference</option>
+            <option value="overlay">Overlay</option>
+            <option value="normal">Normal</option>
+          </select>
+        </div>
+        <div class="control">
+          <label for="master">Master <output data-out="master">100</output></label>
+          <input id="master" data-key="master" type="range" min="0" max="120" step="1" value="100" />
+        </div>
+      </section>
+
+      <section class="panel" data-layer="a">
+        <div class="panel-head">
+          <h2>Layer A</h2>
+          <span class="badge">Plasma bloom</span>
+        </div>
+        <div class="controls">
+          <div class="control">
+            <label for="aBpm">BPM <output data-out="a.bpm">124</output></label>
+            <input id="aBpm" data-key="a.bpm" type="range" min="40" max="220" step="1" value="124" />
+          </div>
+          <div class="control">
+            <label for="aBeat">Beat <output data-out="a.beat">55</output></label>
+            <input id="aBeat" data-key="a.beat" type="range" min="0" max="100" step="1" value="55" />
+          </div>
+          <div class="control">
+            <label for="aSpeed">Speed <output data-out="a.speed">50</output></label>
+            <input id="aSpeed" data-key="a.speed" type="range" min="0" max="100" step="1" value="50" />
+          </div>
+          <div class="control">
+            <label for="aScale">Scale <output data-out="a.scale">50</output></label>
+            <input id="aScale" data-key="a.scale" type="range" min="0" max="100" step="1" value="50" />
+          </div>
+          <div class="control">
+            <label for="aHue">Hue <output data-out="a.hue">185</output></label>
+            <input id="aHue" data-key="a.hue" type="range" min="0" max="360" step="1" value="185" />
+          </div>
+          <div class="control">
+            <label for="aIntensity">Intensity <output data-out="a.intensity">80</output></label>
+            <input id="aIntensity" data-key="a.intensity" type="range" min="0" max="120" step="1" value="80" />
+          </div>
+          <div class="control wide">
+            <button class="tap" data-tap="a" type="button">Tap Tempo A</button>
+          </div>
+          <div class="control wide">
+            <div class="switch-row" data-key="a.motion">
+              <button class="active" data-value="flow" type="button">Flow</button>
+              <button data-value="pulse" type="button">Pulse</button>
+              <button data-value="cut" type="button">Cut</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-layer="b">
+        <div class="panel-head">
+          <h2>Layer B</h2>
+          <span class="badge">Line tunnel</span>
+        </div>
+        <div class="controls">
+          <div class="control">
+            <label for="bBpm">BPM <output data-out="b.bpm">93</output></label>
+            <input id="bBpm" data-key="b.bpm" type="range" min="40" max="220" step="1" value="93" />
+          </div>
+          <div class="control">
+            <label for="bBeat">Beat <output data-out="b.beat">65</output></label>
+            <input id="bBeat" data-key="b.beat" type="range" min="0" max="100" step="1" value="65" />
+          </div>
+          <div class="control">
+            <label for="bSpeed">Speed <output data-out="b.speed">45</output></label>
+            <input id="bSpeed" data-key="b.speed" type="range" min="0" max="100" step="1" value="45" />
+          </div>
+          <div class="control">
+            <label for="bScale">Scale <output data-out="b.scale">54</output></label>
+            <input id="bScale" data-key="b.scale" type="range" min="0" max="100" step="1" value="54" />
+          </div>
+          <div class="control">
+            <label for="bHue">Hue <output data-out="b.hue">310</output></label>
+            <input id="bHue" data-key="b.hue" type="range" min="0" max="360" step="1" value="310" />
+          </div>
+          <div class="control">
+            <label for="bIntensity">Intensity <output data-out="b.intensity">82</output></label>
+            <input id="bIntensity" data-key="b.intensity" type="range" min="0" max="120" step="1" value="82" />
+          </div>
+          <div class="control wide">
+            <button class="tap" data-tap="b" type="button">Tap Tempo B</button>
+          </div>
+          <div class="control wide">
+            <div class="switch-row" data-key="b.motion">
+              <button class="active" data-value="flow" type="button">Flow</button>
+              <button data-value="pulse" type="button">Pulse</button>
+              <button data-value="cut" type="button">Cut</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const DEFAULT_STATE = {
+      mix: 50,
+      blendMode: "screen",
+      master: 100,
+      blackout: false,
+      a: { bpm: 124, beat: 55, speed: 50, scale: 50, hue: 185, intensity: 80, motion: "flow" },
+      b: { bpm: 93, beat: 65, speed: 45, scale: 54, hue: 310, intensity: 82, motion: "flow" }
+    };
+
+    const channel = new BroadcastChannel("browser-vj-control");
+    const state = JSON.parse(localStorage.getItem("vj-state") || JSON.stringify(DEFAULT_STATE));
+    const tapTimes = { a: [], b: [] };
+
+    function getPath(object, path) {
+      return path.split(".").reduce((current, key) => current[key], object);
+    }
+
+    function setPath(object, path, value) {
+      const keys = path.split(".");
+      const last = keys.pop();
+      const target = keys.reduce((current, key) => current[key], object);
+      target[last] = value;
+    }
+
+    function send() {
+      localStorage.setItem("vj-state", JSON.stringify(state));
+      channel.postMessage({ type: "state", state, sentAt: performance.now() });
+      document.getElementById("status").textContent = state.blackout ? "Blackout is active." : "Streaming controls to output.";
+    }
+
+    function updateReadouts() {
+      document.querySelectorAll("[data-out]").forEach((node) => {
+        node.textContent = getPath(state, node.dataset.out);
+      });
+      document.querySelectorAll("[data-key]").forEach((node) => {
+        const value = getPath(state, node.dataset.key);
+        if (node.matches("input, select")) node.value = value;
+      });
+      document.querySelectorAll(".switch-row").forEach((row) => {
+        const value = getPath(state, row.dataset.key);
+        row.querySelectorAll("button").forEach((button) => {
+          button.classList.toggle("active", button.dataset.value === value);
+        });
+      });
+      document.getElementById("blackout").textContent = state.blackout ? "Lights On" : "Blackout";
+    }
+
+    document.querySelectorAll("input[data-key], select[data-key]").forEach((control) => {
+      control.addEventListener("input", () => {
+        const value = control.type === "range" ? Number(control.value) : control.value;
+        setPath(state, control.dataset.key, value);
+        updateReadouts();
+        send();
+      });
+    });
+
+    document.querySelectorAll(".switch-row button").forEach((button) => {
+      button.addEventListener("click", () => {
+        const row = button.closest(".switch-row");
+        setPath(state, row.dataset.key, button.dataset.value);
+        updateReadouts();
+        send();
+      });
+    });
+
+    document.querySelectorAll("[data-tap]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const layer = button.dataset.tap;
+        const now = performance.now();
+        tapTimes[layer] = tapTimes[layer].filter((time) => now - time < 4500);
+        tapTimes[layer].push(now);
+        if (tapTimes[layer].length >= 2) {
+          const intervals = tapTimes[layer].slice(1).map((time, index) => time - tapTimes[layer][index]);
+          const average = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
+          state[layer].bpm = Math.max(40, Math.min(220, Math.round(60000 / average)));
+          updateReadouts();
+          send();
+        }
+      });
+    });
+
+    document.getElementById("openOutput").addEventListener("click", () => {
+      window.open("vj-output.html", "vj-output", "popup=yes,width=1280,height=720");
+      send();
+    });
+
+    document.getElementById("blackout").addEventListener("click", () => {
+      state.blackout = !state.blackout;
+      updateReadouts();
+      send();
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+      Object.assign(state, JSON.parse(JSON.stringify(DEFAULT_STATE)));
+      updateReadouts();
+      send();
+    });
+
+    channel.onmessage = (event) => {
+      if (event.data && event.data.type === "request-state") send();
+    };
+
+    updateReadouts();
+    send();
+  </script>
+</body>
+</html>
