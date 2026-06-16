@@ -52,21 +52,102 @@
     .blackout.active {
       opacity: 1;
     }
+
+    .hud {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      transition: opacity 160ms ease;
+    }
+
+    .hud.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .hud-button {
+      min-height: 38px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(18, 20, 26, 0.76);
+      color: #f4f1ea;
+      border-radius: 8px;
+      padding: 0 14px;
+      font: 600 14px/1 system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+    }
+
   </style>
 </head>
 <body>
   <main class="stage" id="stage">
-    <iframe id="layerA" title="Layer A" src="vj-layer-a.html"></iframe>
-    <iframe id="layerB" title="Layer B" src="vj-layer-b.html"></iframe>
+    <iframe id="layerA" title="Layer A" src="works/plasma-bloom.html?slot=a"></iframe>
+    <iframe id="layerB" title="Layer B" src="works/line-tunnel.html?slot=b"></iframe>
   </main>
+  <div class="hud" id="hud">
+    <button class="hud-button" id="fullscreenButton" type="button">Fullscreen</button>
+  </div>
   <div class="blackout" id="blackout"></div>
 
   <script>
-    const channel = new BroadcastChannel("browser-vj-control");
     const stage = document.getElementById("stage");
     const blackout = document.getElementById("blackout");
+    const layerA = document.getElementById("layerA");
+    const layerB = document.getElementById("layerB");
+    const hud = document.getElementById("hud");
+    const fullscreenButton = document.getElementById("fullscreenButton");
+    let hudTimer = null;
+    let currentState = null;
+
+    function buildSlottedWorkSrc(slot, sourceSrc) {
+      return `${sourceSrc}${sourceSrc.includes("?") ? "&" : "?"}slot=${slot}`;
+    }
+
+    function postStateToLayer(frame) {
+      if (!frame || !frame.contentWindow || !currentState) return;
+      try {
+        frame.contentWindow.postMessage({ type: "vj-state", state: currentState }, "*");
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+
+    function requestStateFromHost() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return;
+      try {
+        host.postMessage({ type: "request-vj-state", role: "output" }, "*");
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+
+    function readStateFromHostWindow() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return null;
+      try {
+        return host.__vjState || null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function syncStateFromStorage() {
+      try {
+        const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
+        if (saved) applyState(saved);
+      } catch (error) {
+        console.warn(error);
+      }
+    }
 
     function applyState(state) {
+      currentState = state;
+      window.__vjState = state;
       const mix = Math.max(0, Math.min(100, Number(state.mix))) / 100;
       const master = Math.max(0, Number(state.master)) / 100;
       stage.style.setProperty("--opacity-a", 1 - mix);
@@ -74,20 +155,100 @@
       stage.style.setProperty("--blend", state.blendMode || "screen");
       stage.style.setProperty("--master", master);
       blackout.classList.toggle("active", Boolean(state.blackout));
+      if (state.sources) {
+        const nextSourceA = state.sources.a ? buildSlottedWorkSrc("a", state.sources.a) : null;
+        const nextSourceB = state.sources.b ? buildSlottedWorkSrc("b", state.sources.b) : null;
+        if (nextSourceA && layerA.getAttribute("src") !== nextSourceA) layerA.src = nextSourceA;
+        if (nextSourceB && layerB.getAttribute("src") !== nextSourceB) layerB.src = nextSourceB;
+      }
+      postStateToLayer(layerA);
+      postStateToLayer(layerB);
     }
 
-    channel.onmessage = (event) => {
-      if (event.data && event.data.type === "state") applyState(event.data.state);
-    };
-
-    try {
-      const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
-      if (saved) applyState(saved);
-    } catch (error) {
-      console.warn(error);
+    function updateFullscreenButton() {
+      fullscreenButton.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
     }
 
-    channel.postMessage({ type: "request-state" });
+    async function toggleFullscreen() {
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else {
+          await document.documentElement.requestFullscreen();
+        }
+      } catch (error) {
+        console.warn(error);
+      }
+      updateFullscreenButton();
+      revealHud();
+    }
+
+    function revealHud() {
+      hud.classList.remove("hidden");
+      clearTimeout(hudTimer);
+      hudTimer = window.setTimeout(() => {
+        if (document.fullscreenElement) hud.classList.add("hidden");
+      }, 1800);
+    }
+
+    window.addEventListener("message", (event) => {
+      if (!event.data) return;
+      if (event.data.type === "vj-state" && event.data.state) {
+        applyState(event.data.state);
+      }
+      if (event.data.type === "request-vj-state") {
+        if (event.source === layerA.contentWindow) postStateToLayer(layerA);
+        if (event.source === layerB.contentWindow) postStateToLayer(layerB);
+      }
+    });
+
+    layerA.addEventListener("load", () => {
+      postStateToLayer(layerA);
+    });
+
+    layerB.addEventListener("load", () => {
+      postStateToLayer(layerB);
+    });
+
+    fullscreenButton.addEventListener("click", toggleFullscreen);
+
+    document.addEventListener("fullscreenchange", () => {
+      updateFullscreenButton();
+      revealHud();
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        toggleFullscreen();
+      }
+      if (event.key === "Escape" && document.fullscreenElement) revealHud();
+    });
+
+    document.addEventListener("dblclick", () => {
+      toggleFullscreen();
+    });
+
+    document.addEventListener("mousemove", () => {
+      revealHud();
+    });
+
+    window.addEventListener("storage", () => {
+      syncStateFromStorage();
+    });
+
+    function syncStateFromHostWindow() {
+      const hostState = readStateFromHostWindow();
+      if (hostState) applyState(hostState);
+    }
+
+    updateFullscreenButton();
+    revealHud();
+    syncStateFromHostWindow();
+    syncStateFromStorage();
+    requestStateFromHost();
+    window.setInterval(syncStateFromHostWindow, 120);
+    window.setInterval(syncStateFromStorage, 120);
   </script>
 </body>
 </html>

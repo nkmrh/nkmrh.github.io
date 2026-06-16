@@ -85,6 +85,11 @@
       background: #1e3a34;
     }
 
+    .button.active {
+      border-color: rgba(101, 214, 173, 0.55);
+      background: #1d352f;
+    }
+
     .button:active {
       transform: translateY(1px);
     }
@@ -103,9 +108,34 @@
       border-radius: 8px;
       padding: 14px;
       display: grid;
-      grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px) minmax(180px, 240px);
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
       gap: 14px;
       align-items: end;
+    }
+
+    .mixer .control.wide-2 {
+      grid-column: span 2;
+    }
+
+    .preview {
+      grid-column: 1 / -1;
+      border: 1px solid var(--line);
+      background: rgba(23, 25, 31, 0.96);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .layer-panels {
+      display: contents;
+    }
+
+    .protocol-loaders {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+      opacity: 0;
+      pointer-events: none;
     }
 
     .panel {
@@ -133,6 +163,129 @@
       color: var(--muted);
       font-size: 12px;
       white-space: nowrap;
+    }
+
+    .preview-meta {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .preview-link {
+      color: var(--text);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(244, 241, 234, 0.28);
+    }
+
+    .preview-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .preview-frame-wrap {
+      position: relative;
+      aspect-ratio: 16 / 9;
+      min-height: 180px;
+      max-height: 420px;
+      background:
+        radial-gradient(circle at top, rgba(101, 214, 173, 0.14), transparent 42%),
+        #050608;
+    }
+
+    .preview-frame {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+      background: #000;
+    }
+
+    .preview-video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: none;
+      background: #000;
+      object-fit: cover;
+    }
+
+    .preview-video.active {
+      display: block;
+    }
+
+    .preview-frame.hidden {
+      visibility: hidden;
+    }
+
+    .preview-note {
+      position: absolute;
+      left: 14px;
+      bottom: 14px;
+      z-index: 2;
+      padding: 8px 10px;
+      border-radius: 7px;
+      background: rgba(5, 6, 8, 0.72);
+      color: var(--muted);
+      font-size: 12px;
+      backdrop-filter: blur(10px);
+    }
+
+    .source-previews {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      padding: 12px 14px 14px;
+      border-top: 1px solid var(--line);
+      background: rgba(14, 16, 21, 0.74);
+    }
+
+    .source-card {
+      min-width: 0;
+    }
+
+    .source-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+
+    .source-title {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .source-badge {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .source-frame-wrap {
+      aspect-ratio: 16 / 9;
+      min-height: 120px;
+      max-height: 220px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .source-frame {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+      background: #000;
     }
 
     .controls {
@@ -218,12 +371,18 @@
       .actions { justify-content: flex-start; }
       .grid { grid-template-columns: 1fr; }
       .mixer { grid-template-columns: 1fr; }
+      .mixer .control.wide-2 { grid-column: auto; }
       .controls { grid-template-columns: 1fr; }
+      .source-previews { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <div class="shell">
+    <div class="protocol-loaders" aria-hidden="true">
+      <iframe id="protocolLoaderA" src="works/plasma-bloom.html" title="Protocol loader A"></iframe>
+      <iframe id="protocolLoaderB" src="works/line-tunnel.html" title="Protocol loader B"></iframe>
+    </div>
     <header>
       <div>
         <h1>VJ Control</h1>
@@ -237,8 +396,70 @@
     </header>
 
     <main class="grid">
+      <section class="preview" aria-label="Preview">
+        <div class="panel-head">
+          <h2>Preview</h2>
+          <div class="preview-meta">
+            <span>Live mirror of output</span>
+            <div class="preview-actions">
+              <button class="button" id="mirrorOutput" type="button">Mirror Output</button>
+              <a class="preview-link" id="openFullSizeLink" href="vj-output.html" target="_blank">Open full size</a>
+            </div>
+          </div>
+        </div>
+        <div class="preview-frame-wrap">
+          <video
+            class="preview-video"
+            id="previewVideo"
+            autoplay
+            muted
+            playsinline
+          ></video>
+          <iframe
+            class="preview-frame"
+            id="previewFrame"
+            title="Output preview"
+            src="vj-output.html"
+            loading="eager"
+          ></iframe>
+          <div class="preview-note" id="previewNote">Embedded preview</div>
+        </div>
+        <div class="source-previews" aria-label="Source previews">
+          <div class="source-card">
+            <div class="source-head">
+              <h3 class="source-title">Layer A</h3>
+              <span class="source-badge" id="sourceBadgeA">Plasma bloom</span>
+            </div>
+            <div class="source-frame-wrap">
+              <iframe
+                class="source-frame"
+                id="sourcePreviewA"
+                title="Layer A preview"
+                src="works/plasma-bloom.html"
+                loading="eager"
+              ></iframe>
+            </div>
+          </div>
+          <div class="source-card">
+            <div class="source-head">
+              <h3 class="source-title">Layer B</h3>
+              <span class="source-badge" id="sourceBadgeB">Line tunnel</span>
+            </div>
+            <div class="source-frame-wrap">
+              <iframe
+                class="source-frame"
+                id="sourcePreviewB"
+                title="Layer B preview"
+                src="works/line-tunnel.html"
+                loading="eager"
+              ></iframe>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="mixer" aria-label="Mixer">
-        <div class="control">
+        <div class="control wide-2">
           <label for="mix">A / B Mix <output data-out="mix">50</output></label>
           <input id="mix" data-key="mix" type="range" min="0" max="100" step="1" value="50" />
         </div>
@@ -257,109 +478,237 @@
           <label for="master">Master <output data-out="master">100</output></label>
           <input id="master" data-key="master" type="range" min="0" max="120" step="1" value="100" />
         </div>
-      </section>
-
-      <section class="panel" data-layer="a">
-        <div class="panel-head">
-          <h2>Layer A</h2>
-          <span class="badge">Plasma bloom</span>
+        <div class="control">
+          <label for="autoMixToggle">Auto Mix</label>
+          <button class="button" id="autoMixToggle" type="button">Off</button>
         </div>
-        <div class="controls">
-          <div class="control">
-            <label for="aBpm">BPM <output data-out="a.bpm">124</output></label>
-            <input id="aBpm" data-key="a.bpm" type="range" min="40" max="220" step="1" value="124" />
-          </div>
-          <div class="control">
-            <label for="aBeat">Beat <output data-out="a.beat">55</output></label>
-            <input id="aBeat" data-key="a.beat" type="range" min="0" max="100" step="1" value="55" />
-          </div>
-          <div class="control">
-            <label for="aSpeed">Speed <output data-out="a.speed">50</output></label>
-            <input id="aSpeed" data-key="a.speed" type="range" min="0" max="100" step="1" value="50" />
-          </div>
-          <div class="control">
-            <label for="aScale">Scale <output data-out="a.scale">50</output></label>
-            <input id="aScale" data-key="a.scale" type="range" min="0" max="100" step="1" value="50" />
-          </div>
-          <div class="control">
-            <label for="aHue">Hue <output data-out="a.hue">185</output></label>
-            <input id="aHue" data-key="a.hue" type="range" min="0" max="360" step="1" value="185" />
-          </div>
-          <div class="control">
-            <label for="aIntensity">Intensity <output data-out="a.intensity">80</output></label>
-            <input id="aIntensity" data-key="a.intensity" type="range" min="0" max="120" step="1" value="80" />
-          </div>
-          <div class="control wide">
-            <button class="tap" data-tap="a" type="button">Tap Tempo A</button>
-          </div>
-          <div class="control wide">
-            <div class="switch-row" data-key="a.motion">
-              <button class="active" data-value="flow" type="button">Flow</button>
-              <button data-value="pulse" type="button">Pulse</button>
-              <button data-value="cut" type="button">Cut</button>
-            </div>
-          </div>
+        <div class="control">
+          <label for="sharedBpmToggle">Shared BPM</label>
+          <button class="button" id="sharedBpmToggle" type="button">Off</button>
+        </div>
+        <div class="control wide-2">
+          <label for="sharedBpmValue">Shared BPM <output data-out="sharedBpm.bpm">120</output></label>
+          <input id="sharedBpmValue" data-key="sharedBpm.bpm" type="range" min="40" max="220" step="1" value="120" />
+        </div>
+        <div class="control">
+          <button class="tap" data-tap="shared" type="button">Tap Tempo Shared</button>
+        </div>
+        <div class="control">
+          <label for="autoMixBeats">Beats / Cycle</label>
+          <select id="autoMixBeats" data-key="autoMix.beats">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="4" selected>4</option>
+            <option value="8">8</option>
+          </select>
+        </div>
+        <div class="control">
+          <label for="autoMixDepth">Depth <output data-out="autoMix.depth">100</output></label>
+          <input id="autoMixDepth" data-key="autoMix.depth" type="range" min="0" max="100" step="1" value="100" />
+        </div>
+        <div class="control">
+          <label for="autoMixShape">Shape</label>
+          <select id="autoMixShape" data-key="autoMix.shape">
+            <option value="smooth">Smooth</option>
+            <option value="triangle">Triangle</option>
+            <option value="cut">Cut</option>
+          </select>
         </div>
       </section>
 
-      <section class="panel" data-layer="b">
-        <div class="panel-head">
-          <h2>Layer B</h2>
-          <span class="badge">Line tunnel</span>
-        </div>
-        <div class="controls">
-          <div class="control">
-            <label for="bBpm">BPM <output data-out="b.bpm">93</output></label>
-            <input id="bBpm" data-key="b.bpm" type="range" min="40" max="220" step="1" value="93" />
-          </div>
-          <div class="control">
-            <label for="bBeat">Beat <output data-out="b.beat">65</output></label>
-            <input id="bBeat" data-key="b.beat" type="range" min="0" max="100" step="1" value="65" />
-          </div>
-          <div class="control">
-            <label for="bSpeed">Speed <output data-out="b.speed">45</output></label>
-            <input id="bSpeed" data-key="b.speed" type="range" min="0" max="100" step="1" value="45" />
-          </div>
-          <div class="control">
-            <label for="bScale">Scale <output data-out="b.scale">54</output></label>
-            <input id="bScale" data-key="b.scale" type="range" min="0" max="100" step="1" value="54" />
-          </div>
-          <div class="control">
-            <label for="bHue">Hue <output data-out="b.hue">310</output></label>
-            <input id="bHue" data-key="b.hue" type="range" min="0" max="360" step="1" value="310" />
-          </div>
-          <div class="control">
-            <label for="bIntensity">Intensity <output data-out="b.intensity">82</output></label>
-            <input id="bIntensity" data-key="b.intensity" type="range" min="0" max="120" step="1" value="82" />
-          </div>
-          <div class="control wide">
-            <button class="tap" data-tap="b" type="button">Tap Tempo B</button>
-          </div>
-          <div class="control wide">
-            <div class="switch-row" data-key="b.motion">
-              <button class="active" data-value="flow" type="button">Flow</button>
-              <button data-value="pulse" type="button">Pulse</button>
-              <button data-value="cut" type="button">Cut</button>
-            </div>
-          </div>
-        </div>
-      </section>
+      <div class="layer-panels" id="layerPanels"></div>
     </main>
   </div>
 
   <script>
-    const DEFAULT_STATE = {
+    const BASE_STATE = {
       mix: 50,
       blendMode: "screen",
       master: 100,
       blackout: false,
-      a: { bpm: 124, beat: 55, speed: 50, scale: 50, hue: 185, intensity: 80, motion: "flow" },
-      b: { bpm: 93, beat: 65, speed: 45, scale: 54, hue: 310, intensity: 82, motion: "flow" }
+      sources: {
+        a: "works/plasma-bloom.html",
+        b: "works/line-tunnel.html"
+      },
+      sharedBpm: { enabled: false, bpm: 120 },
+      autoMix: { enabled: false, beats: 4, depth: 100, shape: "smooth" },
     };
+    const WORK_OPTIONS = [
+      { src: "works/plasma-bloom.html", label: "Plasma Bloom" },
+      { src: "works/line-tunnel.html", label: "Line Tunnel" }
+    ];
 
-    const channel = new BroadcastChannel("browser-vj-control");
-    const state = JSON.parse(localStorage.getItem("vj-state") || JSON.stringify(DEFAULT_STATE));
-    const tapTimes = { a: [], b: [] };
+    const layerPanels = document.getElementById("layerPanels");
+    const protocolLoaders = [
+      document.getElementById("protocolLoaderA"),
+      document.getElementById("protocolLoaderB")
+    ];
+    const previewFrame = document.getElementById("previewFrame");
+    const previewVideo = document.getElementById("previewVideo");
+    const previewNote = document.getElementById("previewNote");
+    const mirrorButton = document.getElementById("mirrorOutput");
+    const autoMixToggle = document.getElementById("autoMixToggle");
+    const sharedBpmToggle = document.getElementById("sharedBpmToggle");
+    const mixerSection = document.querySelector(".mixer");
+    const openFullSizeLink = document.getElementById("openFullSizeLink");
+    const sourcePreviewFrames = {
+      a: document.getElementById("sourcePreviewA"),
+      b: document.getElementById("sourcePreviewB")
+    };
+    let state = null;
+    let layerProtocols = [];
+    let workProtocolMap = {};
+    const tapTimes = { shared: [] };
+    let mirrorStream = null;
+    let lastAutoMixSentAt = 0;
+    let outputWindow = null;
+
+    function cloneJson(value) {
+      return JSON.parse(JSON.stringify(value));
+    }
+
+    function slotTitle(slot) {
+      return slot === "a" ? "Layer A" : "Layer B";
+    }
+
+    async function fetchWorkProtocol(src) {
+      const response = await fetch(src, { cache: "no-store" });
+      const html = await response.text();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const node = doc.getElementById("vj-layer-protocol");
+      if (!node) throw new Error(`Missing vj-layer-protocol in ${src}`);
+      return JSON.parse(node.textContent);
+    }
+
+    function requestRawProtocolFromLoader(frame, src) {
+      // Browsers treat each file:// document as a separate (opaque) origin, so
+      // frame.contentDocument is null/blocked. Read the protocol over postMessage
+      // instead (the work pages reply to "request-vj-layer-protocol").
+      return new Promise((resolve, reject) => {
+        let settled = false;
+
+        const cleanup = () => {
+          window.clearInterval(retryId);
+          window.clearTimeout(timeoutId);
+          window.removeEventListener("message", onMessage);
+          frame.removeEventListener("load", requestProtocol);
+        };
+
+        const onMessage = (event) => {
+          if (settled) return;
+          if (event.source !== frame.contentWindow) return;
+          if (!event.data || event.data.type !== "vj-layer-protocol" || !event.data.protocol) return;
+          settled = true;
+          cleanup();
+          resolve(event.data.protocol);
+        };
+
+        const requestProtocol = () => {
+          try {
+            if (frame.contentWindow) {
+              frame.contentWindow.postMessage({ type: "request-vj-layer-protocol" }, "*");
+            }
+          } catch (error) {
+            // Ignore; retried on interval and on the next load event.
+          }
+        };
+
+        const retryId = window.setInterval(requestProtocol, 250);
+        const timeoutId = window.setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(new Error(`Timed out waiting for protocol from ${src}`));
+        }, 6000);
+
+        window.addEventListener("message", onMessage);
+        frame.addEventListener("load", requestProtocol);
+        if (frame.getAttribute("src") !== src) {
+          frame.setAttribute("src", src);
+        } else {
+          requestProtocol();
+        }
+      });
+    }
+
+    function renderWorkSelectOptions() {
+      const options = WORK_OPTIONS.map((work) => `<option value="${work.src}">${work.label}</option>`).join("");
+      const sourceControls = `
+        <div class="control">
+          <label for="sourceA">Layer A Work</label>
+          <select id="sourceA">${options}</select>
+        </div>
+        <div class="control">
+          <label for="sourceB">Layer B Work</label>
+          <select id="sourceB">${options}</select>
+        </div>
+      `;
+      mixerSection.insertAdjacentHTML("beforeend", sourceControls);
+    }
+
+    async function loadWorkProtocolMap() {
+      const nextMap = {};
+      if (window.location.protocol !== "file:") {
+        const protocols = await Promise.all(WORK_OPTIONS.map((work) => fetchWorkProtocol(work.src)));
+        WORK_OPTIONS.forEach((work, index) => {
+          nextMap[work.src] = protocols[index];
+        });
+        return nextMap;
+      }
+
+      const protocols = await Promise.all([
+        requestRawProtocolFromLoader(protocolLoaders[0], WORK_OPTIONS[0].src),
+        requestRawProtocolFromLoader(protocolLoaders[1], WORK_OPTIONS[1].src)
+      ]);
+      nextMap[WORK_OPTIONS[0].src] = protocols[0];
+      nextMap[WORK_OPTIONS[1].src] = protocols[1];
+      return nextMap;
+    }
+
+    function normalizeProtocol(protocol, slot, sourceSrc) {
+      return {
+        ...protocol,
+        id: slot,
+        sourceSrc,
+        panelTitle: slotTitle(slot)
+      };
+    }
+
+    function resolveWorkProtocol(sourceSrc) {
+      if (workProtocolMap[sourceSrc]) return workProtocolMap[sourceSrc];
+      const filename = sourceSrc.split("/").pop();
+      const matchedKey = Object.keys(workProtocolMap).find((key) => key.endsWith(filename));
+      return matchedKey ? workProtocolMap[matchedKey] : null;
+    }
+
+    function buildDefaultState(protocols) {
+      const defaults = cloneJson(BASE_STATE);
+      protocols.forEach((protocol) => {
+        defaults[protocol.id] = { ...protocol.defaults };
+      });
+      return defaults;
+    }
+
+    function createInitialState(protocols) {
+      const defaults = buildDefaultState(protocols);
+      try {
+        const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
+        if (!saved) return defaults;
+        const next = {
+          ...defaults,
+          ...saved,
+          sources: { ...defaults.sources, ...(saved.sources || {}) },
+          sharedBpm: { ...defaults.sharedBpm, ...(saved.sharedBpm || {}) },
+          autoMix: { ...defaults.autoMix, ...(saved.autoMix || {}) }
+        };
+        protocols.forEach((protocol) => {
+          next[protocol.id] = { ...defaults[protocol.id], ...(saved[protocol.id] || {}) };
+        });
+        return next;
+      } catch (error) {
+        return defaults;
+      }
+    }
 
     function getPath(object, path) {
       return path.split(".").reduce((current, key) => current[key], object);
@@ -372,13 +721,447 @@
       target[last] = value;
     }
 
+    function renderLayerPanels(protocols) {
+      layerPanels.innerHTML = protocols.map((protocol) => {
+        const controls = protocol.controls.map((control) => renderLayerControl(protocol, control)).join("");
+        const tapControl = protocol.tapTempoLabel ? `
+          <div class="control wide">
+            <button class="tap" data-tap="${protocol.id}" type="button">${protocol.tapTempoLabel}</button>
+          </div>
+        ` : "";
+        return `
+          <section class="panel" data-layer="${protocol.id}">
+            <div class="panel-head">
+              <h2>${protocol.panelTitle}</h2>
+              <span class="badge">${protocol.badge}</span>
+            </div>
+            <div class="controls">
+              ${controls}
+              ${tapControl}
+            </div>
+          </section>
+        `;
+      }).join("");
+    }
+
+    function renderLayerControl(protocol, control) {
+      const keyPath = `${protocol.id}.${control.key}`;
+      if (control.type === "segmented") {
+        const options = control.options.map((option) => `
+          <button data-value="${option.value}" type="button">${option.label}</button>
+        `).join("");
+        return `
+          <div class="control wide">
+            <label>${control.label}</label>
+            <div class="switch-row" data-key="${keyPath}">
+              ${options}
+            </div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="control">
+          <label for="${protocol.id}-${control.key}">${control.label} <output data-out="${keyPath}">${protocol.defaults[control.key]}</output></label>
+          <input
+            id="${protocol.id}-${control.key}"
+            data-key="${keyPath}"
+            type="${control.type}"
+            min="${control.min}"
+            max="${control.max}"
+            step="${control.step}"
+            value="${protocol.defaults[control.key]}"
+          />
+        </div>
+      `;
+    }
+
+    function bindDynamicControls() {
+      document.querySelectorAll("input[data-key], select[data-key]").forEach((control) => {
+        control.addEventListener("input", () => {
+          const value = control.type === "range" ? Number(control.value) : control.value;
+          setPath(state, control.dataset.key, value);
+          if (state.sharedBpm.enabled && (control.dataset.key.endsWith(".bpm") || control.dataset.key === "sharedBpm.bpm")) {
+            state.sharedBpm.bpm = clampBpm(value);
+          }
+          updateReadouts();
+          send();
+        });
+      });
+
+      document.querySelectorAll(".switch-row button").forEach((button) => {
+        button.addEventListener("click", () => {
+          const row = button.closest(".switch-row");
+          setPath(state, row.dataset.key, button.dataset.value);
+          updateReadouts();
+          send();
+        });
+      });
+
+      document.querySelectorAll("[data-tap]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const layer = button.dataset.tap;
+          if (!tapTimes[layer]) tapTimes[layer] = [];
+          const now = performance.now();
+          tapTimes[layer] = tapTimes[layer].filter((time) => now - time < 4500);
+          tapTimes[layer].push(now);
+          if (tapTimes[layer].length < 2) return;
+          const intervals = tapTimes[layer].slice(1).map((time, index) => time - tapTimes[layer][index]);
+          const average = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
+          const tappedBpm = clampBpm(60000 / average);
+          if (layer === "shared") {
+            state.sharedBpm.bpm = tappedBpm;
+          } else {
+            state[layer].bpm = tappedBpm;
+            if (state.sharedBpm.enabled) state.sharedBpm.bpm = tappedBpm;
+          }
+          updateReadouts();
+          send();
+        });
+      });
+    }
+
+    async function handleWorkSelection(slot, value) {
+      state.sources[slot] = value;
+      updateSourceUi();
+      send();
+      try {
+        await reloadSlotProtocol(slot, value);
+      } catch (error) {
+        console.error(error);
+        document.getElementById("status").textContent = `Failed to load ${slotTitle(slot)} work: ${error.message}`;
+      }
+    }
+
+    function updateSourceUi() {
+      const sourceA = document.getElementById("sourceA");
+      const sourceB = document.getElementById("sourceB");
+      const sourceBadges = {
+        a: document.getElementById("sourceBadgeA"),
+        b: document.getElementById("sourceBadgeB")
+      };
+      if (sourceA) sourceA.value = state.sources.a;
+      if (sourceB) sourceB.value = state.sources.b;
+      // Only reassign src when it actually changes; otherwise the iframe reloads
+      // on every readout update (e.g. each mix-slider input) and the preview flickers.
+      setFrameSrcIfChanged(sourcePreviewFrames.a, buildSlottedWorkSrc("a", state.sources.a));
+      setFrameSrcIfChanged(sourcePreviewFrames.b, buildSlottedWorkSrc("b", state.sources.b));
+      layerProtocols.forEach((protocol) => {
+        if (sourceBadges[protocol.id]) sourceBadges[protocol.id].textContent = protocol.badge;
+      });
+    }
+
+    function clampBpm(value) {
+      return Math.max(40, Math.min(220, Math.round(Number(value) || 120)));
+    }
+
+    function buildSlottedWorkSrc(slot, sourceSrc) {
+      return `${sourceSrc}${sourceSrc.includes("?") ? "&" : "?"}slot=${slot}`;
+    }
+
+    function setFrameSrcIfChanged(frame, nextSrc) {
+      if (!frame) return;
+      if (frame.getAttribute("src") !== nextSrc) frame.src = nextSrc;
+    }
+
+    function createInlineOutputHtml() {
+      return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>VJ Output</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    .stage {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      filter: brightness(var(--master, 1));
+      transition: filter 90ms linear;
+    }
+    iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      pointer-events: none;
+      background: transparent;
+    }
+    #layerA { opacity: var(--opacity-a, 0.5); }
+    #layerB {
+      opacity: var(--opacity-b, 0.5);
+      mix-blend-mode: var(--blend, screen);
+    }
+    .blackout {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      opacity: 0;
+      transition: opacity 80ms linear;
+      pointer-events: none;
+    }
+    .blackout.active { opacity: 1; }
+    .hud {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      transition: opacity 160ms ease;
+    }
+    .hud.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .hud-button {
+      min-height: 38px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(18, 20, 26, 0.76);
+      color: #f4f1ea;
+      border-radius: 8px;
+      padding: 0 14px;
+      font: 600 14px/1 system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+    }
+  </style>
+</head>
+<body>
+  <main class="stage" id="stage">
+    <iframe id="layerA" title="Layer A" src="${buildSlottedWorkSrc("a", BASE_STATE.sources.a)}"></iframe>
+    <iframe id="layerB" title="Layer B" src="${buildSlottedWorkSrc("b", BASE_STATE.sources.b)}"></iframe>
+  </main>
+  <div class="hud" id="hud">
+    <button class="hud-button" id="fullscreenButton" type="button">Fullscreen</button>
+  </div>
+  <div class="blackout" id="blackout"></div>
+  <script>
+    const stage = document.getElementById("stage");
+    const blackout = document.getElementById("blackout");
+    const layerA = document.getElementById("layerA");
+    const layerB = document.getElementById("layerB");
+    const hud = document.getElementById("hud");
+    const fullscreenButton = document.getElementById("fullscreenButton");
+    let currentState = null;
+    let hudTimer = null;
+
+    function buildSlottedWorkSrc(slot, sourceSrc) {
+      return sourceSrc + (sourceSrc.includes("?") ? "&" : "?") + "slot=" + slot;
+    }
+
+    function postStateToLayer(frame) {
+      if (!frame || !frame.contentWindow || !currentState) return;
+      try {
+        frame.contentWindow.postMessage({ type: "vj-state", state: currentState }, "*");
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+
+    function readStateFromHostWindow() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return null;
+      try {
+        return host.__vjState || null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function applyState(state) {
+      currentState = state;
+      const mix = Math.max(0, Math.min(100, Number(state.mix))) / 100;
+      const master = Math.max(0, Number(state.master)) / 100;
+      stage.style.setProperty("--opacity-a", 1 - mix);
+      stage.style.setProperty("--opacity-b", mix);
+      stage.style.setProperty("--blend", state.blendMode || "screen");
+      stage.style.setProperty("--master", master);
+      blackout.classList.toggle("active", Boolean(state.blackout));
+      if (state.sources) {
+        const nextSourceA = state.sources.a ? buildSlottedWorkSrc("a", state.sources.a) : null;
+        const nextSourceB = state.sources.b ? buildSlottedWorkSrc("b", state.sources.b) : null;
+        if (nextSourceA && layerA.getAttribute("src") !== nextSourceA) layerA.src = nextSourceA;
+        if (nextSourceB && layerB.getAttribute("src") !== nextSourceB) layerB.src = nextSourceB;
+      }
+      postStateToLayer(layerA);
+      postStateToLayer(layerB);
+    }
+
+    function updateFullscreenButton() {
+      fullscreenButton.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
+    }
+
+    async function toggleFullscreen() {
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else {
+          await document.documentElement.requestFullscreen();
+        }
+      } catch (error) {
+        console.warn(error);
+      }
+      updateFullscreenButton();
+      revealHud();
+    }
+
+    function revealHud() {
+      hud.classList.remove("hidden");
+      clearTimeout(hudTimer);
+      hudTimer = window.setTimeout(() => {
+        if (document.fullscreenElement) hud.classList.add("hidden");
+      }, 1800);
+    }
+
+    function syncState() {
+      const hostState = readStateFromHostWindow();
+      if (hostState) applyState(hostState);
+    }
+
+    window.addEventListener("message", (event) => {
+      if (!event.data) return;
+      if (event.data.type === "vj-state" && event.data.state) applyState(event.data.state);
+      if (event.data.type === "request-vj-state") {
+        if (event.source === layerA.contentWindow) postStateToLayer(layerA);
+        if (event.source === layerB.contentWindow) postStateToLayer(layerB);
+      }
+    });
+
+    layerA.addEventListener("load", () => postStateToLayer(layerA));
+    layerB.addEventListener("load", () => postStateToLayer(layerB));
+    fullscreenButton.addEventListener("click", toggleFullscreen);
+    document.addEventListener("fullscreenchange", () => {
+      updateFullscreenButton();
+      revealHud();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        toggleFullscreen();
+      }
+      if (event.key === "Escape" && document.fullscreenElement) revealHud();
+    });
+    document.addEventListener("dblclick", () => toggleFullscreen());
+    document.addEventListener("mousemove", () => revealHud());
+
+    updateFullscreenButton();
+    revealHud();
+    syncState();
+    window.setInterval(syncState, 120);
+  <\/script>
+</body>
+</html>`;
+    }
+
+    function loadPreviewOutput() {
+      if (window.location.protocol === "file:") {
+        previewFrame.srcdoc = createInlineOutputHtml();
+      } else {
+        previewFrame.src = "vj-output.html";
+      }
+    }
+
+    function openOutputWindow() {
+      if (window.location.protocol !== "file:") {
+        outputWindow = window.open("vj-output.html", "vj-output", "popup=yes,width=1280,height=720");
+        return outputWindow;
+      }
+      outputWindow = window.open("", "vj-output", "popup=yes,width=1280,height=720");
+      if (outputWindow) {
+        outputWindow.document.open();
+        outputWindow.document.write(createInlineOutputHtml());
+        outputWindow.document.close();
+      }
+      return outputWindow;
+    }
+
+    function postStateToWindow(targetWindow) {
+      if (!targetWindow || !state) return;
+      try {
+        targetWindow.postMessage({ type: "vj-state", state }, "*");
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+
+    function broadcastState() {
+      postStateToWindow(previewFrame.contentWindow);
+      postStateToWindow(sourcePreviewFrames.a && sourcePreviewFrames.a.contentWindow);
+      postStateToWindow(sourcePreviewFrames.b && sourcePreviewFrames.b.contentWindow);
+      if (outputWindow && outputWindow.closed) outputWindow = null;
+      postStateToWindow(outputWindow);
+    }
+
+    function syncSharedBpm() {
+      if (!state.sharedBpm.enabled) return;
+      const bpm = clampBpm(state.sharedBpm.bpm);
+      state.sharedBpm.bpm = bpm;
+      state.a.bpm = bpm;
+      state.b.bpm = bpm;
+    }
+
     function send() {
+      window.__vjState = state;
       localStorage.setItem("vj-state", JSON.stringify(state));
-      channel.postMessage({ type: "state", state, sentAt: performance.now() });
+      broadcastState();
       document.getElementById("status").textContent = state.blackout ? "Blackout is active." : "Streaming controls to output.";
     }
 
+    function stopMirror() {
+      if (mirrorStream) {
+        mirrorStream.getTracks().forEach((track) => track.stop());
+        mirrorStream = null;
+      }
+      previewVideo.srcObject = null;
+      previewVideo.classList.remove("active");
+      previewFrame.classList.remove("hidden");
+      previewNote.textContent = "Embedded preview";
+      mirrorButton.textContent = "Mirror Output";
+    }
+
+    async function startMirror() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        previewNote.textContent = "Screen Capture API is not available in this browser.";
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            frameRate: { ideal: 30, max: 60 }
+          },
+          audio: false
+        });
+        if (mirrorStream) stopMirror();
+        mirrorStream = stream;
+        previewVideo.srcObject = stream;
+        previewVideo.classList.add("active");
+        previewFrame.classList.add("hidden");
+        previewNote.textContent = "Mirroring output window";
+        mirrorButton.textContent = "Stop Mirror";
+        const [track] = stream.getVideoTracks();
+        if (track) {
+          track.addEventListener("ended", () => {
+            stopMirror();
+          }, { once: true });
+        }
+      } catch (error) {
+        previewNote.textContent = "Mirror permission was canceled.";
+      }
+    }
+
     function updateReadouts() {
+      syncSharedBpm();
       document.querySelectorAll("[data-out]").forEach((node) => {
         node.textContent = getPath(state, node.dataset.out);
       });
@@ -393,45 +1176,83 @@
         });
       });
       document.getElementById("blackout").textContent = state.blackout ? "Lights On" : "Blackout";
+      autoMixToggle.textContent = state.autoMix.enabled ? "On" : "Off";
+      autoMixToggle.classList.toggle("active", state.autoMix.enabled);
+      sharedBpmToggle.textContent = state.sharedBpm.enabled ? "On" : "Off";
+      sharedBpmToggle.classList.toggle("active", state.sharedBpm.enabled);
+      updateSourceUi();
     }
 
-    document.querySelectorAll("input[data-key], select[data-key]").forEach((control) => {
-      control.addEventListener("input", () => {
-        const value = control.type === "range" ? Number(control.value) : control.value;
-        setPath(state, control.dataset.key, value);
-        updateReadouts();
-        send();
-      });
-    });
+    function getAutoMixBpm() {
+      return clampBpm(state.sharedBpm.bpm);
+    }
 
-    document.querySelectorAll(".switch-row button").forEach((button) => {
-      button.addEventListener("click", () => {
-        const row = button.closest(".switch-row");
-        setPath(state, row.dataset.key, button.dataset.value);
-        updateReadouts();
-        send();
-      });
-    });
+    function getAutoMixValue(now) {
+      const bpm = Math.max(1, getAutoMixBpm());
+      const beats = Math.max(1, Number(state.autoMix.beats) || 1);
+      const depth = Math.max(0, Math.min(100, Number(state.autoMix.depth))) / 100;
+      const time = (performance.timeOrigin + now) * 0.001;
+      const cycle = (time * bpm / 60) / beats;
+      const phase = cycle % 1;
+      let wave = 0;
 
-    document.querySelectorAll("[data-tap]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const layer = button.dataset.tap;
-        const now = performance.now();
-        tapTimes[layer] = tapTimes[layer].filter((time) => now - time < 4500);
-        tapTimes[layer].push(now);
-        if (tapTimes[layer].length >= 2) {
-          const intervals = tapTimes[layer].slice(1).map((time, index) => time - tapTimes[layer][index]);
-          const average = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
-          state[layer].bpm = Math.max(40, Math.min(220, Math.round(60000 / average)));
+      if (state.autoMix.shape === "cut") {
+        wave = phase < 0.5 ? -1 : 1;
+      } else if (state.autoMix.shape === "triangle") {
+        wave = 1 - 4 * Math.abs(phase - 0.5);
+      } else {
+        wave = Math.sin(cycle * Math.PI * 2);
+      }
+
+      return Math.max(0, Math.min(100, Math.round(50 + wave * 50 * depth)));
+    }
+
+    function animateAutoMix(now) {
+      if (state.autoMix.enabled) {
+        const nextMix = getAutoMixValue(now);
+        if (nextMix !== state.mix && now - lastAutoMixSentAt > 33) {
+          state.mix = nextMix;
           updateReadouts();
           send();
+          lastAutoMixSentAt = now;
         }
-      });
-    });
+      }
+      requestAnimationFrame(animateAutoMix);
+    }
 
     document.getElementById("openOutput").addEventListener("click", () => {
-      window.open("vj-output.html", "vj-output", "popup=yes,width=1280,height=720");
+      openOutputWindow();
       send();
+    });
+
+    openFullSizeLink.addEventListener("click", (event) => {
+      if (window.location.protocol !== "file:") return;
+      event.preventDefault();
+      openOutputWindow();
+      send();
+    });
+
+    autoMixToggle.addEventListener("click", () => {
+      state.autoMix.enabled = !state.autoMix.enabled;
+      updateReadouts();
+      send();
+    });
+
+    sharedBpmToggle.addEventListener("click", () => {
+      state.sharedBpm.enabled = !state.sharedBpm.enabled;
+      if (state.sharedBpm.enabled) {
+        state.sharedBpm.bpm = clampBpm(state.a.bpm);
+      }
+      updateReadouts();
+      send();
+    });
+
+    mirrorButton.addEventListener("click", async () => {
+      if (mirrorStream) {
+        stopMirror();
+        return;
+      }
+      await startMirror();
     });
 
     document.getElementById("blackout").addEventListener("click", () => {
@@ -441,17 +1262,89 @@
     });
 
     document.getElementById("reset").addEventListener("click", () => {
-      Object.assign(state, JSON.parse(JSON.stringify(DEFAULT_STATE)));
+      Object.assign(state, buildDefaultState(layerProtocols), { sources: { ...BASE_STATE.sources } });
       updateReadouts();
       send();
     });
 
-    channel.onmessage = (event) => {
-      if (event.data && event.data.type === "request-state") send();
-    };
+    document.addEventListener("change", async (event) => {
+      if (event.target && event.target.id === "sourceA") {
+        await handleWorkSelection("a", event.target.value);
+      } else if (event.target && event.target.id === "sourceB") {
+        await handleWorkSelection("b", event.target.value);
+      }
+    });
 
-    updateReadouts();
-    send();
+    window.addEventListener("message", (event) => {
+      if (!event.data) return;
+      if (event.data.type === "request-vj-state") {
+        if (event.data.role === "output" && event.source !== previewFrame.contentWindow) {
+          outputWindow = event.source;
+        }
+        postStateToWindow(event.source);
+      }
+    });
+
+    window.addEventListener("beforeunload", () => {
+      stopMirror();
+    });
+
+    async function reloadSlotProtocol(slot, sourceSrc) {
+      const index = slot === "a" ? 0 : 1;
+      const rawProtocol = resolveWorkProtocol(sourceSrc);
+      if (!rawProtocol) throw new Error(`Unknown work source: ${sourceSrc}`);
+      const protocol = normalizeProtocol(rawProtocol, slot, sourceSrc);
+      layerProtocols[index] = protocol;
+      state[slot] = { ...protocol.defaults };
+      renderLayerPanels(layerProtocols);
+      bindDynamicControls();
+      updateReadouts();
+      send();
+    }
+
+    async function init() {
+      try {
+        renderWorkSelectOptions();
+        let savedSources = null;
+        try {
+          const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
+          savedSources = saved && saved.sources ? saved.sources : null;
+        } catch (error) {
+          savedSources = null;
+        }
+        const initialSources = {
+          a: savedSources && savedSources.a ? savedSources.a : BASE_STATE.sources.a,
+          b: savedSources && savedSources.b ? savedSources.b : BASE_STATE.sources.b
+        };
+        workProtocolMap = await loadWorkProtocolMap();
+        loadPreviewOutput();
+        layerProtocols = [
+          normalizeProtocol(workProtocolMap[initialSources.a], "a", initialSources.a),
+          normalizeProtocol(workProtocolMap[initialSources.b], "b", initialSources.b)
+        ];
+        renderLayerPanels(layerProtocols);
+        state = createInitialState(layerProtocols);
+        window.__vjState = state;
+        state.sources = { ...initialSources, ...(state.sources || {}) };
+        bindDynamicControls();
+        updateReadouts();
+        previewFrame.addEventListener("load", () => {
+          postStateToWindow(previewFrame.contentWindow);
+        });
+        Object.values(sourcePreviewFrames).forEach((frame) => {
+          frame.addEventListener("load", () => {
+            postStateToWindow(frame.contentWindow);
+          });
+        });
+        send();
+        requestAnimationFrame(animateAutoMix);
+      } catch (error) {
+        console.error(error);
+        document.getElementById("status").textContent = "Failed to load layer protocol.";
+      }
+    }
+
+    init();
   </script>
 </body>
 </html>

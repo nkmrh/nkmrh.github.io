@@ -22,16 +22,86 @@
 </head>
 <body>
   <canvas id="canvas"></canvas>
+  <script id="vj-layer-protocol" type="application/json">
+    {
+      "id": "b",
+      "title": "Layer B",
+      "badge": "Line tunnel",
+      "defaults": {
+        "bpm": 93,
+        "beat": 65,
+        "speed": 45,
+        "scale": 54,
+        "twist": 48,
+        "hue": 310,
+        "intensity": 82,
+        "motion": "flow"
+      },
+      "controls": [
+        { "key": "twist", "label": "Twist", "type": "range", "min": 0, "max": 100, "step": 1 }
+      ]
+    }
+  </script>
   <script>
+    const layerProtocol = JSON.parse(document.getElementById("vj-layer-protocol").textContent);
+    const requestedSlot = new URLSearchParams(window.location.search).get("slot");
+    const layerSlot = requestedSlot === "a" || requestedSlot === "b" ? requestedSlot : layerProtocol.id;
+    const runtimeProtocol = {
+      ...layerProtocol,
+      id: layerSlot,
+      title: `Layer ${layerSlot.toUpperCase()}`
+    };
+    function postLayerProtocol() {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "vj-layer-protocol", protocol: runtimeProtocol }, "*");
+      }
+    }
+    postLayerProtocol();
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "request-vj-layer-protocol") postLayerProtocol();
+    });
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
-    const channel = new BroadcastChannel("browser-vj-control");
-    const state = { bpm: 93, beat: 65, speed: 45, scale: 54, hue: 310, intensity: 82, motion: "flow" };
+    const state = { ...runtimeProtocol.defaults };
+    function requestStateFromHost() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return;
+      try {
+        host.postMessage({ type: "request-vj-state", role: "work", slot: layerSlot }, "*");
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+
+    function readStateFromHostWindow() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return null;
+      try {
+        return host.__vjState || null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function syncStateFromStorage() {
+      try {
+        const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
+        if (saved) applyLayer(saved[layerSlot]);
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+
+    function seededUnit(seed) {
+      const value = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+      return value - Math.floor(value);
+    }
+
     const points = Array.from({ length: 180 }, (_, index) => ({
       index,
       lane: index % 18,
       depth: (index % 10) / 10,
-      drift: Math.random() * Math.PI * 2
+      drift: seededUnit(index + 1) * Math.PI * 2
     }));
     let dpr = 1;
 
@@ -57,14 +127,19 @@
       return 1 + kick * state.beat / 180;
     }
 
+    function getGlobalTime(now) {
+      return (performance.timeOrigin + now) * 0.001;
+    }
+
     function draw(now) {
-      const time = now * 0.001;
+      const time = getGlobalTime(now);
       const w = window.innerWidth;
       const h = window.innerHeight;
       const cx = w * 0.5;
       const cy = h * 0.5;
       const speed = 0.15 + state.speed / 70;
       const scale = 0.64 + state.scale / 70;
+      const twistAmount = state.twist / 100;
       const beat = pulse(time);
       const intensity = state.intensity / 100;
 
@@ -78,7 +153,7 @@
         const travel = (point.depth + time * speed * 0.13) % 1;
         const perspective = Math.pow(travel, 1.85);
         const radius = perspective * Math.min(w, h) * 0.92 * scale * beat;
-        const twist = Math.sin(time * 0.9 + point.drift + travel * 5) * 0.16;
+        const twist = Math.sin(time * 0.9 + point.drift + travel * 5) * (0.04 + twistAmount * 0.28);
         return {
           x: cx + Math.cos(laneAngle + twist) * radius,
           y: cy + Math.sin(laneAngle * 1.08 - twist) * radius * 0.72,
@@ -120,21 +195,29 @@
       requestAnimationFrame(draw);
     }
 
-    channel.onmessage = (event) => {
-      if (event.data && event.data.type === "state") applyLayer(event.data.state.b);
-    };
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "vj-state" && event.data.state) {
+        applyLayer(event.data.state[layerSlot]);
+      }
+    });
 
-    try {
-      const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
-      if (saved) applyLayer(saved.b);
-    } catch (error) {
-      console.warn(error);
+    window.addEventListener("storage", () => {
+      syncStateFromStorage();
+    });
+
+    function syncStateFromHostWindow() {
+      const hostState = readStateFromHostWindow();
+      if (hostState) applyLayer(hostState[layerSlot]);
     }
 
     window.addEventListener("resize", resize);
     resize();
     requestAnimationFrame(draw);
-    channel.postMessage({ type: "request-state" });
+    syncStateFromHostWindow();
+    syncStateFromStorage();
+    requestStateFromHost();
+    window.setInterval(syncStateFromHostWindow, 120);
+    window.setInterval(syncStateFromStorage, 120);
   </script>
 </body>
 </html>
