@@ -210,55 +210,90 @@
       backdrop-filter: blur(10px);
     }
 
-    .source-previews {
+    .library {
+      grid-column: 1 / -1;
+    }
+
+    .work-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
       gap: 12px;
-      padding: 12px 14px 14px;
-      border-top: 1px solid var(--line);
+      padding: 14px;
+    }
+
+    .work-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
       background: rgba(14, 16, 21, 0.74);
     }
 
-    .source-card {
-      min-width: 0;
+    .work-card.on-a {
+      border-color: rgba(101, 214, 173, 0.6);
     }
 
-    .source-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: baseline;
-      margin-bottom: 8px;
+    .work-card.on-b {
+      border-color: rgba(255, 207, 90, 0.55);
     }
 
-    .source-title {
-      margin: 0;
-      font-size: 13px;
-      font-weight: 600;
-    }
-
-    .source-badge {
-      color: var(--muted);
-      font-size: 11px;
-      white-space: nowrap;
-    }
-
-    .source-frame-wrap {
+    .work-thumb {
       aspect-ratio: 16 / 9;
-      min-height: 120px;
-      max-height: 220px;
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 8px;
-      overflow: hidden;
       background: #000;
+      border-bottom: 1px solid var(--line);
     }
 
-    .source-frame {
+    .work-thumb iframe {
       width: 100%;
       height: 100%;
       border: 0;
       display: block;
       background: #000;
+      pointer-events: none;
+    }
+
+    .work-card-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+    }
+
+    .work-card-label {
+      font-size: 12px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .work-card-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .work-card-actions button {
+      min-width: 30px;
+      height: 28px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #11141a;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .work-card-actions button[data-assign="a"].active {
+      color: var(--text);
+      border-color: rgba(101, 214, 173, 0.6);
+      background: #1d352f;
+    }
+
+    .work-card-actions button[data-assign="b"].active {
+      color: var(--text);
+      border-color: rgba(255, 207, 90, 0.5);
+      background: #302818;
     }
 
     .controls {
@@ -346,7 +381,7 @@
       .mixer { grid-template-columns: 1fr; }
       .mixer .control.wide-2 { grid-column: auto; }
       .controls { grid-template-columns: 1fr; }
-      .source-previews { grid-template-columns: 1fr; }
+      .work-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
     }
   </style>
 </head>
@@ -384,38 +419,14 @@
           ></iframe>
           <div class="preview-note" id="previewNote">Embedded preview</div>
         </div>
-        <div class="source-previews" aria-label="Source previews">
-          <div class="source-card">
-            <div class="source-head">
-              <h3 class="source-title">Layer A</h3>
-              <span class="source-badge" id="sourceBadgeA">Plasma bloom</span>
-            </div>
-            <div class="source-frame-wrap">
-              <iframe
-                class="source-frame"
-                id="sourcePreviewA"
-                title="Layer A preview"
-                src="works/plasma-bloom.html"
-                loading="eager"
-              ></iframe>
-            </div>
-          </div>
-          <div class="source-card">
-            <div class="source-head">
-              <h3 class="source-title">Layer B</h3>
-              <span class="source-badge" id="sourceBadgeB">Line tunnel</span>
-            </div>
-            <div class="source-frame-wrap">
-              <iframe
-                class="source-frame"
-                id="sourcePreviewB"
-                title="Layer B preview"
-                src="works/line-tunnel.html"
-                loading="eager"
-              ></iframe>
-            </div>
-          </div>
+      </section>
+
+      <section class="library panel" aria-label="Works">
+        <div class="panel-head">
+          <h2>Works</h2>
+          <span class="badge">Tap A or B to load into a layer</span>
         </div>
+        <div class="work-grid" id="workLibrary"></div>
       </section>
 
       <section class="mixer" aria-label="Mixer">
@@ -518,11 +529,7 @@
     const switchAbButton = document.getElementById("switchAb");
     const mixSlider = document.getElementById("mix");
     const mixOutput = document.querySelector('[data-out="mix"]');
-    const mixerSection = document.querySelector(".mixer");
-    const sourcePreviewFrames = {
-      a: document.getElementById("sourcePreviewA"),
-      b: document.getElementById("sourcePreviewB")
-    };
+    const workLibrary = document.getElementById("workLibrary");
     let state = null;
     let layerProtocols = [];
     let workProtocolMap = {};
@@ -599,19 +606,29 @@
       });
     }
 
-    function renderWorkSelectOptions() {
-      const options = WORK_OPTIONS.map((work) => `<option value="${work.src}">${work.label}</option>`).join("");
-      const sourceControls = `
-        <div class="control">
-          <label for="sourceA">Layer A Work</label>
-          <select id="sourceA">${options}</select>
+    function renderWorkLibrary() {
+      workLibrary.innerHTML = WORK_OPTIONS.map((work) => `
+        <div class="work-card" data-src="${work.src}">
+          <div class="work-thumb">
+            <iframe src="${work.src}" title="${work.label} preview" loading="lazy"></iframe>
+          </div>
+          <div class="work-card-foot">
+            <span class="work-card-label">${work.label}</span>
+            <div class="work-card-actions">
+              <button type="button" data-assign="a" data-src="${work.src}">A</button>
+              <button type="button" data-assign="b" data-src="${work.src}">B</button>
+            </div>
+          </div>
         </div>
-        <div class="control">
-          <label for="sourceB">Layer B Work</label>
-          <select id="sourceB">${options}</select>
-        </div>
-      `;
-      mixerSection.insertAdjacentHTML("beforeend", sourceControls);
+      `).join("");
+    }
+
+    function bindWorkLibrary() {
+      workLibrary.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-assign]");
+        if (!button) return;
+        handleWorkSelection(button.dataset.assign, button.dataset.src);
+      });
     }
 
     async function loadWorkProtocolMap() {
@@ -815,7 +832,7 @@
 
     async function handleWorkSelection(slot, value) {
       state.sources[slot] = value;
-      updateSourceUi();
+      updateLibrary();
       send();
       try {
         await reloadSlotProtocol(slot, value);
@@ -825,21 +842,14 @@
       }
     }
 
-    function updateSourceUi() {
-      const sourceA = document.getElementById("sourceA");
-      const sourceB = document.getElementById("sourceB");
-      const sourceBadges = {
-        a: document.getElementById("sourceBadgeA"),
-        b: document.getElementById("sourceBadgeB")
-      };
-      if (sourceA) sourceA.value = state.sources.a;
-      if (sourceB) sourceB.value = state.sources.b;
-      // Only reassign src when it actually changes; otherwise the iframe reloads
-      // on every readout update (e.g. each mix-slider input) and the preview flickers.
-      setFrameSrcIfChanged(sourcePreviewFrames.a, buildSlottedWorkSrc("a", state.sources.a));
-      setFrameSrcIfChanged(sourcePreviewFrames.b, buildSlottedWorkSrc("b", state.sources.b));
-      layerProtocols.forEach((protocol) => {
-        if (sourceBadges[protocol.id]) sourceBadges[protocol.id].textContent = protocol.badge;
+    function updateLibrary() {
+      workLibrary.querySelectorAll(".work-card").forEach((card) => {
+        const src = card.dataset.src;
+        card.classList.toggle("on-a", state.sources.a === src);
+        card.classList.toggle("on-b", state.sources.b === src);
+        card.querySelectorAll("[data-assign]").forEach((button) => {
+          button.classList.toggle("active", state.sources[button.dataset.assign] === src);
+        });
       });
     }
 
@@ -849,11 +859,6 @@
 
     function buildSlottedWorkSrc(slot, sourceSrc) {
       return `${sourceSrc}${sourceSrc.includes("?") ? "&" : "?"}slot=${slot}`;
-    }
-
-    function setFrameSrcIfChanged(frame, nextSrc) {
-      if (!frame) return;
-      if (frame.getAttribute("src") !== nextSrc) frame.src = nextSrc;
     }
 
     function createInlineOutputHtml() {
@@ -1091,8 +1096,6 @@
 
     function broadcastState() {
       postStateToWindow(previewFrame.contentWindow);
-      postStateToWindow(sourcePreviewFrames.a && sourcePreviewFrames.a.contentWindow);
-      postStateToWindow(sourcePreviewFrames.b && sourcePreviewFrames.b.contentWindow);
       if (outputWindow && outputWindow.closed) outputWindow = null;
       postStateToWindow(outputWindow);
     }
@@ -1162,7 +1165,7 @@
       sharedBpmToggle.textContent = state.sharedBpm.enabled ? "On" : "Off";
       sharedBpmToggle.classList.toggle("active", state.sharedBpm.enabled);
       switchAbButton.textContent = switchLabel();
-      updateSourceUi();
+      updateLibrary();
     }
 
     function getAutoMixBpm() {
@@ -1288,14 +1291,6 @@
       send();
     });
 
-    document.addEventListener("change", async (event) => {
-      if (event.target && event.target.id === "sourceA") {
-        await handleWorkSelection("a", event.target.value);
-      } else if (event.target && event.target.id === "sourceB") {
-        await handleWorkSelection("b", event.target.value);
-      }
-    });
-
     window.addEventListener("message", (event) => {
       if (!event.data) return;
       if (event.data.type === "request-vj-state") {
@@ -1320,7 +1315,8 @@
 
     async function init() {
       try {
-        renderWorkSelectOptions();
+        renderWorkLibrary();
+        bindWorkLibrary();
         let savedSources = null;
         try {
           const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
@@ -1351,11 +1347,6 @@
         updateReadouts();
         previewFrame.addEventListener("load", () => {
           postStateToWindow(previewFrame.contentWindow);
-        });
-        Object.values(sourcePreviewFrames).forEach((frame) => {
-          frame.addEventListener("load", () => {
-            postStateToWindow(frame.contentWindow);
-          });
         });
         send();
         requestAnimationFrame(animateAutoMix);
