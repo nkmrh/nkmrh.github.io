@@ -15,6 +15,8 @@
       --accent: #65d6ad;
       --accent-2: #ffcf5a;
       --danger: #ff6f87;
+      --layer-a: #65d6ad;
+      --layer-b: #ffcf5a;
     }
 
     * { box-sizing: border-box; }
@@ -107,22 +109,46 @@
       background: rgba(23, 25, 31, 0.96);
       border-radius: 8px;
       padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .mixer-group + .mixer-group {
+      border-top: 1px solid var(--line);
+      padding-top: 16px;
+    }
+
+    .group-title {
+      margin: 0 0 10px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .group-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(150px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px 14px;
       align-items: end;
     }
 
-    .mixer .control.wide-2 {
-      grid-column: span 2;
+    .group-grid .control.wide {
+      grid-column: 1 / -1;
     }
 
     .preview {
       grid-column: 1 / -1;
       border: 1px solid var(--line);
-      background: rgba(23, 25, 31, 0.96);
+      background: var(--bg);
       border-radius: 8px;
       overflow: hidden;
+      /* Keep the preview pinned to the top while scrolling the controls. */
+      position: sticky;
+      top: 8px;
+      z-index: 5;
     }
 
     .layer-panels {
@@ -177,8 +203,11 @@
     .preview-frame-wrap {
       position: relative;
       aspect-ratio: 16 / 9;
-      min-height: 180px;
-      max-height: 420px;
+      min-height: 150px;
+      max-height: 300px;
+      /* Cap width to match the 300px height cap (16:9) and center it. */
+      max-width: 534px;
+      margin-inline: auto;
       background:
         radial-gradient(circle at top, rgba(101, 214, 173, 0.14), transparent 42%),
         #050608;
@@ -373,13 +402,86 @@
       background: #1d352f;
     }
 
+    /* --- A/B identity color coding --- */
+    .panel[data-layer="a"] { border-left: 3px solid var(--layer-a); }
+    .panel[data-layer="b"] { border-left: 3px solid var(--layer-b); }
+    .panel[data-layer="a"] h2 { color: var(--layer-a); }
+    .panel[data-layer="b"] h2 { color: var(--layer-b); }
+
+    .work-card-actions button[data-assign="a"] { border-color: rgba(101, 214, 173, 0.4); }
+    .work-card-actions button[data-assign="b"] { border-color: rgba(255, 207, 90, 0.4); }
+
+    /* --- A/B Mix slider with end labels --- */
+    .mix-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .mix-row input[type="range"] {
+      flex: 1;
+    }
+
+    .mix-end {
+      font-size: 13px;
+      font-weight: 700;
+      width: 14px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .mix-end-a { color: var(--layer-a); }
+    .mix-end-b { color: var(--layer-b); }
+
+    #switchAb.to-b { border-color: rgba(255, 207, 90, 0.5); }
+    #switchAb.to-a { border-color: rgba(101, 214, 173, 0.5); }
+
+    .mix-readout {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* --- pill toggle switches --- */
+    .switch-toggle {
+      width: 56px;
+      height: 28px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #11141a;
+      position: relative;
+      padding: 0;
+      cursor: pointer;
+    }
+
+    .switch-toggle::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: transform 140ms ease, background 140ms ease;
+    }
+
+    .switch-toggle.active {
+      border-color: rgba(101, 214, 173, 0.55);
+      background: #1d352f;
+    }
+
+    .switch-toggle.active::after {
+      transform: translateX(28px);
+      background: var(--accent);
+    }
+
     @media (max-width: 860px) {
       body { padding: 12px; }
       header { align-items: flex-start; flex-direction: column; }
       .actions { justify-content: flex-start; }
       .grid { grid-template-columns: 1fr; }
-      .mixer { grid-template-columns: 1fr; }
-      .mixer .control.wide-2 { grid-column: auto; }
       .controls { grid-template-columns: 1fr; }
       .work-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
     }
@@ -421,6 +523,41 @@
         </div>
       </section>
 
+      <section class="mixer" aria-label="Mix">
+        <div class="mixer-group">
+          <div class="group-grid">
+            <div class="control wide">
+              <label for="mix">A / B Mix</label>
+              <div class="mix-row">
+                <span class="mix-end mix-end-a">A</span>
+                <input id="mix" data-key="mix" type="range" min="0" max="100" step="1" value="50" />
+                <span class="mix-end mix-end-b">B</span>
+              </div>
+              <div class="mix-readout"><output data-out="mix">50</output>% toward B</div>
+            </div>
+            <div class="control">
+              <label for="switchAb">A / B Switch</label>
+              <button class="button" id="switchAb" type="button">Fade to B</button>
+            </div>
+            <div class="control">
+              <label for="blendMode">Blend</label>
+              <select id="blendMode" data-key="blendMode">
+                <option value="screen">Screen</option>
+                <option value="lighten">Lighten</option>
+                <option value="multiply">Multiply</option>
+                <option value="difference">Difference</option>
+                <option value="overlay">Overlay</option>
+                <option value="normal">Normal</option>
+              </select>
+            </div>
+            <div class="control">
+              <label for="master">Master <output data-out="master">100</output></label>
+              <input id="master" data-key="master" type="range" min="0" max="120" step="1" value="100" />
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="library panel" aria-label="Works">
         <div class="panel-head">
           <h2>Works</h2>
@@ -429,69 +566,54 @@
         <div class="work-grid" id="workLibrary"></div>
       </section>
 
-      <section class="mixer" aria-label="Mixer">
-        <div class="control wide-2">
-          <label for="mix">A / B Mix <output data-out="mix">50</output></label>
-          <input id="mix" data-key="mix" type="range" min="0" max="100" step="1" value="50" />
+      <div class="layer-panels" id="layerPanels"></div>
+
+      <section class="mixer" aria-label="Automation">
+        <div class="mixer-group">
+          <h3 class="group-title">Auto Mix</h3>
+          <div class="group-grid">
+            <div class="control">
+              <label for="autoMixToggle">Enabled</label>
+              <button class="switch-toggle" id="autoMixToggle" type="button" aria-pressed="false"></button>
+            </div>
+            <div class="control">
+              <label for="autoMixBeats">Beats / Cycle</label>
+              <select id="autoMixBeats" data-key="autoMix.beats">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="4" selected>4</option>
+                <option value="8">8</option>
+              </select>
+            </div>
+            <div class="control">
+              <label for="autoMixShape">Shape</label>
+              <select id="autoMixShape" data-key="autoMix.shape">
+                <option value="smooth">Smooth</option>
+                <option value="triangle">Triangle</option>
+                <option value="cut">Cut</option>
+              </select>
+            </div>
+          </div>
         </div>
-        <div class="control">
-          <label for="switchAb">A / B Switch</label>
-          <button class="button" id="switchAb" type="button">Fade to B</button>
-        </div>
-        <div class="control">
-          <label for="blendMode">Blend</label>
-          <select id="blendMode" data-key="blendMode">
-            <option value="screen">Screen</option>
-            <option value="lighten">Lighten</option>
-            <option value="multiply">Multiply</option>
-            <option value="difference">Difference</option>
-            <option value="overlay">Overlay</option>
-            <option value="normal">Normal</option>
-          </select>
-        </div>
-        <div class="control">
-          <label for="master">Master <output data-out="master">100</output></label>
-          <input id="master" data-key="master" type="range" min="0" max="120" step="1" value="100" />
-        </div>
-        <div class="control">
-          <label for="autoMixToggle">Auto Mix</label>
-          <button class="button" id="autoMixToggle" type="button">Off</button>
-        </div>
-        <div class="control">
-          <label for="sharedBpmToggle">Shared BPM</label>
-          <button class="button" id="sharedBpmToggle" type="button">Off</button>
-        </div>
-        <div class="control wide-2">
-          <label for="sharedBpmValue">Shared BPM <output data-out="sharedBpm.bpm">120</output></label>
-          <input id="sharedBpmValue" data-key="sharedBpm.bpm" type="range" min="40" max="220" step="1" value="120" />
-        </div>
-        <div class="control">
-          <button class="tap" data-tap="shared" type="button">Tap Tempo Shared</button>
-        </div>
-        <div class="control">
-          <label for="autoMixBeats">Beats / Cycle</label>
-          <select id="autoMixBeats" data-key="autoMix.beats">
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="4" selected>4</option>
-            <option value="8">8</option>
-          </select>
-        </div>
-        <div class="control">
-          <label for="autoMixDepth">Depth <output data-out="autoMix.depth">100</output></label>
-          <input id="autoMixDepth" data-key="autoMix.depth" type="range" min="0" max="100" step="1" value="100" />
-        </div>
-        <div class="control">
-          <label for="autoMixShape">Shape</label>
-          <select id="autoMixShape" data-key="autoMix.shape">
-            <option value="smooth">Smooth</option>
-            <option value="triangle">Triangle</option>
-            <option value="cut">Cut</option>
-          </select>
+
+        <div class="mixer-group">
+          <h3 class="group-title">Tempo</h3>
+          <div class="group-grid">
+            <div class="control wide">
+              <label for="sharedBpmValue">BPM <output data-out="sharedBpm.bpm">120</output></label>
+              <input id="sharedBpmValue" data-key="sharedBpm.bpm" type="range" min="40" max="220" step="1" value="120" />
+            </div>
+            <div class="control">
+              <label for="sharedBpmToggle">Shared BPM</label>
+              <button class="switch-toggle" id="sharedBpmToggle" type="button" aria-pressed="false"></button>
+            </div>
+            <div class="control">
+              <label for="tapTempo">Tap</label>
+              <button class="tap" id="tapTempo" data-tap="shared" type="button">Tap Tempo</button>
+            </div>
+          </div>
         </div>
       </section>
-
-      <div class="layer-panels" id="layerPanels"></div>
     </main>
   </div>
 
@@ -509,7 +631,7 @@
         b: "works/line-tunnel.html"
       },
       sharedBpm: { enabled: false, bpm: 120 },
-      autoMix: { enabled: false, beats: 4, depth: 100, shape: "smooth" },
+      autoMix: { enabled: false, beats: 4, shape: "smooth" },
     };
     // Populated by works/works-list.js (generated by build-works.js). The inline
     // fallback keeps the page working if the generated file is missing.
@@ -1135,13 +1257,20 @@
       return `${state.autoMix.shape === "cut" ? "Cut" : "Fade"} to ${state.mix < 50 ? "B" : "A"}`;
     }
 
+    function reflectSwitchButton() {
+      switchAbButton.textContent = switchLabel();
+      const toB = state.mix < 50;
+      switchAbButton.classList.toggle("to-b", toB);
+      switchAbButton.classList.toggle("to-a", !toB);
+    }
+
     // Lightweight per-frame update for the Auto Mix / Switch loop. Avoids the full
     // updateReadouts() document sweep, which is too heavy to run every frame on
     // mobile (iOS Safari) and starves the preview iframe.
     function reflectMix() {
       if (mixOutput) mixOutput.textContent = state.mix;
       if (mixSlider && document.activeElement !== mixSlider) mixSlider.value = state.mix;
-      switchAbButton.textContent = switchLabel();
+      reflectSwitchButton();
     }
 
     function updateReadouts() {
@@ -1160,11 +1289,11 @@
         });
       });
       document.getElementById("blackout").textContent = state.blackout ? "Lights On" : "Blackout";
-      autoMixToggle.textContent = state.autoMix.enabled ? "On" : "Off";
       autoMixToggle.classList.toggle("active", state.autoMix.enabled);
-      sharedBpmToggle.textContent = state.sharedBpm.enabled ? "On" : "Off";
+      autoMixToggle.setAttribute("aria-pressed", String(state.autoMix.enabled));
       sharedBpmToggle.classList.toggle("active", state.sharedBpm.enabled);
-      switchAbButton.textContent = switchLabel();
+      sharedBpmToggle.setAttribute("aria-pressed", String(state.sharedBpm.enabled));
+      reflectSwitchButton();
       updateLibrary();
     }
 
@@ -1175,7 +1304,6 @@
     function getAutoMixValue(now) {
       const bpm = Math.max(1, getAutoMixBpm());
       const beats = Math.max(1, Number(state.autoMix.beats) || 1);
-      const depth = Math.max(0, Math.min(100, Number(state.autoMix.depth))) / 100;
       const time = (performance.timeOrigin + now) * 0.001;
       const cycle = (time * bpm / 60) / beats;
       const phase = cycle % 1;
@@ -1189,7 +1317,7 @@
         wave = Math.sin(cycle * Math.PI * 2);
       }
 
-      return Math.max(0, Math.min(100, Math.round(50 + wave * 50 * depth)));
+      return Math.max(0, Math.min(100, Math.round(50 + wave * 50)));
     }
 
     // Manual A/B Switch transition. Curve follows the Auto Mix Shape:
