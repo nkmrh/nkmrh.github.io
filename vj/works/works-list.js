@@ -6,6 +6,10 @@ window.VJ_WORKS = [
     "label": "Bars"
   },
   {
+    "src": "works/checker.html",
+    "label": "Checker"
+  },
+  {
     "src": "works/drift.html",
     "label": "Drift"
   },
@@ -14,8 +18,16 @@ window.VJ_WORKS = [
     "label": "Line tunnel"
   },
   {
+    "src": "works/moire.html",
+    "label": "Moiré"
+  },
+  {
     "src": "works/mono-grid.html",
     "label": "Grid"
+  },
+  {
+    "src": "works/noise.html",
+    "label": "Noise"
   },
   {
     "src": "works/plasma-bloom.html",
@@ -26,11 +38,19 @@ window.VJ_WORKS = [
     "label": "Rings"
   },
   {
+    "src": "works/strobe.html",
+    "label": "Strobe"
+  },
+  {
     "src": "works/sweep-lines.html",
     "label": "Sweep"
   },
   {
     "src": "works/wave-grid.html",
     "label": "Wave grid"
+  },
+  {
+    "src": "works/wipe.html",
+    "label": "Wipe"
   }
 ];
