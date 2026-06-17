@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Diptych — Drift</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script id="vj-layer-protocol" type="application/json">
+    {
+      "id": "a",
+      "title": "Layer A",
+      "badge": "Drift",
+      "controls": [
+        { "key": "speed", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 35 },
+        { "key": "count", "label": "Count", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
+        { "key": "scale", "label": "Size", "type": "range", "min": 0, "max": 100, "step": 1, "default": 40 },
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 190 },
+        { "key": "intensity", "label": "Intensity", "type": "range", "min": 0, "max": 100, "step": 1, "default": 80 }
+      ]
+    }
+  </script>
+
+  <script>
+    const layerProtocol = JSON.parse(document.getElementById("vj-layer-protocol").textContent);
+    const requestedSlot = new URLSearchParams(window.location.search).get("slot");
+    const layerSlot = requestedSlot === "a" || requestedSlot === "b" ? requestedSlot : layerProtocol.id;
+    const runtimeProtocol = { ...layerProtocol, id: layerSlot, title: `Layer ${layerSlot.toUpperCase()}` };
+    function postLayerProtocol() {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "vj-layer-protocol", protocol: runtimeProtocol }, "*");
+      }
+    }
+    postLayerProtocol();
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "request-vj-layer-protocol") postLayerProtocol();
+    });
+
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const protocolDefaults = (protocol) =>
+      (protocol.controls || []).reduce((acc, control) => { acc[control.key] = control.default; return acc; }, {});
+    const state = { ...protocolDefaults(runtimeProtocol) };
+    let dpr = 1;
+
+    function requestStateFromHost() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return;
+      try { host.postMessage({ type: "request-vj-state", role: "work", slot: layerSlot }, "*"); } catch (error) { console.warn(error); }
+    }
+    function readStateFromHostWindow() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return null;
+      try { return host.__vjState || null; } catch (error) { return null; }
+    }
+    function syncStateFromStorage() {
+      try { const saved = JSON.parse(localStorage.getItem("vj-state") || "null"); if (saved) applyLayer(saved[layerSlot]); } catch (error) { console.warn(error); }
+    }
+    function applyLayer(next) { if (next) Object.assign(state, next); }
+    function resize() {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(window.innerWidth * dpr);
+      canvas.height = Math.floor(window.innerHeight * dpr);
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    function getGlobalTime(now) { return (performance.timeOrigin + now) * 0.001; }
+
+    function rand(i) { const v = Math.sin(i * 127.1 + 0.5) * 43758.5453; return v - Math.floor(v); }
+
+    function draw(now) {
+      const time = getGlobalTime(now);
+      const w = window.innerWidth, h = window.innerHeight;
+      const intensity = state.intensity / 100;
+      const count = Math.round(20 + state.count);
+      const speed = 0.01 + state.speed / 400;
+      const size = 1 + state.scale / 28;
+
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, w, h);
+      for (let i = 0; i < count; i++) {
+        const fx = rand(i);
+        const fy = rand(i + 99);
+        const x = ((fx + time * speed * (0.5 + fx)) % 1) * w;
+        const y = ((fy + time * speed * 0.6 * (0.4 + fy)) % 1) * h;
+        const hue = (state.hue + i) % 360;
+        const alpha = (0.35 + 0.45 * (0.5 + 0.5 * Math.sin(time * 0.6 + i))) * intensity;
+        ctx.fillStyle = `hsla(${hue}, 45%, 80%, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      requestAnimationFrame(draw);
+    }
+
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "vj-state" && event.data.state) applyLayer(event.data.state[layerSlot]);
+    });
+    window.addEventListener("storage", () => { syncStateFromStorage(); });
+    function syncStateFromHostWindow() { const hostState = readStateFromHostWindow(); if (hostState) applyLayer(hostState[layerSlot]); }
+
+    window.addEventListener("resize", resize);
+    resize();
+    requestAnimationFrame(draw);
+    syncStateFromHostWindow();
+    syncStateFromStorage();
+    requestStateFromHost();
+    window.setInterval(syncStateFromHostWindow, 120);
+    window.setInterval(syncStateFromStorage, 120);
+  </script>
+</body>
+</html>

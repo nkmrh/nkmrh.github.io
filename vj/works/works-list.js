@@ -2,12 +2,32 @@
 // Regenerate with: node vj/build-works.js
 window.VJ_WORKS = [
   {
+    "src": "works/bars.html",
+    "label": "Bars"
+  },
+  {
+    "src": "works/drift.html",
+    "label": "Drift"
+  },
+  {
     "src": "works/line-tunnel.html",
     "label": "Line tunnel"
   },
   {
+    "src": "works/mono-grid.html",
+    "label": "Grid"
+  },
+  {
     "src": "works/plasma-bloom.html",
     "label": "Plasma bloom"
+  },
+  {
+    "src": "works/rings.html",
+    "label": "Rings"
+  },
+  {
+    "src": "works/sweep-lines.html",
+    "label": "Sweep"
   },
   {
     "src": "works/wave-grid.html",
