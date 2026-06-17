@@ -14,6 +14,14 @@ window.VJ_WORKS = [
     "label": "Drift"
   },
   {
+    "src": "works/feedback.html",
+    "label": "Feedback"
+  },
+  {
+    "src": "works/flow.html",
+    "label": "Flow"
+  },
+  {
     "src": "works/kaleido.html",
     "label": "Kaleido"
   },
@@ -46,6 +54,10 @@ window.VJ_WORKS = [
     "label": "Plasma bloom"
   },
   {
+    "src": "works/plasma.html",
+    "label": "Plasma"
+  },
+  {
     "src": "works/rays.html",
     "label": "Rays"
   },
@@ -64,6 +76,10 @@ window.VJ_WORKS = [
   {
     "src": "works/sweep-lines.html",
     "label": "Sweep"
+  },
+  {
+    "src": "works/warp-tunnel.html",
+    "label": "Tunnel"
   },
   {
     "src": "works/wave-grid.html",

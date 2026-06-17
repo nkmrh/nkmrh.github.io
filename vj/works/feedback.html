@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Diptych — Kaleido</title>
+  <title>Diptych — Feedback</title>
   <style>
     html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
     canvas { display: block; width: 100vw; height: 100vh; }
@@ -16,14 +16,14 @@
     {
       "id": "a",
       "title": "Layer A",
-      "badge": "Kaleido",
+      "badge": "Feedback",
       "controls": [
         { "key": "bpm", "label": "BPM", "type": "range", "min": 40, "max": 220, "step": 1, "default": 120 },
-        { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 60 },
-        { "key": "segments", "label": "Segments", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
-        { "key": "speed", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 45 },
-        { "key": "scale", "label": "Scale", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
-        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 40 }
+        { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 65 },
+        { "key": "speed", "label": "Spin", "type": "range", "min": 0, "max": 100, "step": 1, "default": 55 },
+        { "key": "zoom", "label": "Zoom", "type": "range", "min": 0, "max": 100, "step": 1, "default": 45 },
+        { "key": "count", "label": "Sources", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 180 }
       ]
     }
   </script>
@@ -73,58 +73,47 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
     function getGlobalTime(now) { return (performance.timeOrigin + now) * 0.001; }
-    function pulse(time) { const phase = (time * state.bpm / 60) % 1; return 1 + Math.pow(1 - phase, 6) * state.beat / 130; }
+    function kick(time) { const phase = (time * state.bpm / 60) % 1; return Math.pow(1 - phase, 6); }
 
-    function drawMotif(t, R, scale, beat, wedge) {
-      // Moving blobs placed INSIDE the wedge; the caller clips to the wedge and
-      // mirrors/rotates the slices to build the kaleidoscope symmetry.
-      for (let i = 0; i < 7; i++) {
-        const ang = (0.15 + 0.7 * Math.abs(Math.sin(t * (0.3 + i * 0.17) + i * 1.3))) * wedge;
-        const rr = R * (0.1 + 0.55 * Math.abs(Math.sin(t * (0.5 + i * 0.11) + i))) * beat;
-        const x = Math.cos(ang) * rr;
-        const y = Math.sin(ang) * rr;
-        const hue = (state.hue + i * 30 + t * 22) % 360;
-        const size = (10 + i * 5) * scale;
+    function draw(now) {
+      const time = getGlobalTime(now);
+      const w = window.innerWidth, h = window.innerHeight;
+      const cx = w * 0.5, cy = h * 0.5;
+      const beat = kick(time) * state.beat / 100;
+      const zoom = 1 + 0.004 + state.zoom / 100 * 0.03;
+      const rot = (state.speed - 50) / 50 * 0.026;
+
+      // Feedback: redraw the previous frame zoomed + rotated about the centre.
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(rot);
+      ctx.scale(zoom, zoom);
+      ctx.translate(-cx, -cy);
+      ctx.globalAlpha = 0.95;
+      ctx.drawImage(canvas, 0, 0, w, h);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.06)";
+      ctx.fillRect(0, 0, w, h);
+
+      // New bright sources feeding the loop.
+      ctx.globalCompositeOperation = "lighter";
+      const count = Math.round(2 + state.count / 12);
+      for (let i = 0; i < count; i++) {
+        const ang = time * (0.5 + i * 0.3) + i * 2.0;
+        const rad = Math.min(w, h) * 0.22 * (0.4 + 0.6 * Math.sin(time * 0.6 + i));
+        const x = cx + Math.cos(ang) * rad;
+        const y = cy + Math.sin(ang) * rad;
+        const hue = (state.hue + i * 40 + time * 30) % 360;
+        const size = 6 + beat * 18;
         const g = ctx.createRadialGradient(x, y, 0, x, y, size);
-        g.addColorStop(0, `hsla(${hue}, 90%, 66%, 0.85)`);
+        g.addColorStop(0, `hsla(${hue}, 90%, 66%, 0.9)`);
         g.addColorStop(1, "hsla(0, 0%, 0%, 0)");
         ctx.fillStyle = g;
         ctx.beginPath();
         ctx.arc(x, y, size, 0, Math.PI * 2);
         ctx.fill();
       }
-    }
-
-    function draw(now) {
-      const t = now * 0.001;
-      const w = window.innerWidth, h = window.innerHeight;
-      const cx = w * 0.5, cy = h * 0.5;
-      const beat = pulse(getGlobalTime(now));
-      const segs = Math.round(4 + state.segments / 8); // mirror pairs (4..16)
-      const speed = 0.2 + state.speed / 50;
-      const scale = 0.5 + state.scale / 50;
-      const R = Math.hypot(w, h) / 2; // reach the corners
-      const wedge = Math.PI / segs;
-
-      ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
-      ctx.fillRect(0, 0, w, h);
-      ctx.globalCompositeOperation = "lighter";
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(t * speed * 0.12);
-      for (let i = 0; i < segs * 2; i++) {
-        ctx.save();
-        ctx.rotate(i * wedge);
-        if (i % 2 === 1) ctx.scale(1, -1); // mirror every other slice
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.arc(0, 0, R, 0, wedge);
-        ctx.closePath();
-        ctx.clip();
-        drawMotif(t, R, scale, beat, wedge);
-        ctx.restore();
-      }
-      ctx.restore();
       ctx.globalCompositeOperation = "source-over";
       requestAnimationFrame(draw);
     }

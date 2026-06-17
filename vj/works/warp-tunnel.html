@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Diptych — Tunnel</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script id="vj-layer-protocol" type="application/json">
+    {
+      "id": "a",
+      "title": "Layer A",
+      "badge": "Tunnel",
+      "controls": [
+        { "key": "bpm", "label": "BPM", "type": "range", "min": 40, "max": 220, "step": 1, "default": 120 },
+        { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 70 },
+        { "key": "speed", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
+        { "key": "twist", "label": "Twist", "type": "range", "min": 0, "max": 100, "step": 1, "default": 45 },
+        { "key": "density", "label": "Density", "type": "range", "min": 0, "max": 100, "step": 1, "default": 45 },
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 200 }
+      ]
+    }
+  </script>
+
+  <script>
+    const layerProtocol = JSON.parse(document.getElementById("vj-layer-protocol").textContent);
+    const requestedSlot = new URLSearchParams(window.location.search).get("slot");
+    const layerSlot = requestedSlot === "a" || requestedSlot === "b" ? requestedSlot : layerProtocol.id;
+    const runtimeProtocol = { ...layerProtocol, id: layerSlot, title: `Layer ${layerSlot.toUpperCase()}` };
+    function postLayerProtocol() {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "vj-layer-protocol", protocol: runtimeProtocol }, "*");
+      }
+    }
+    postLayerProtocol();
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "request-vj-layer-protocol") postLayerProtocol();
+    });
+
+    const protocolDefaults = (protocol) =>
+      (protocol.controls || []).reduce((acc, control) => { acc[control.key] = control.default; return acc; }, {});
+    const state = { ...protocolDefaults(runtimeProtocol) };
+
+    function requestStateFromHost() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return;
+      try { host.postMessage({ type: "request-vj-state", role: "work", slot: layerSlot }, "*"); } catch (error) { console.warn(error); }
+    }
+    function readStateFromHostWindow() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return null;
+      try { return host.__vjState || null; } catch (error) { return null; }
+    }
+    function syncStateFromStorage() {
+      try { const saved = JSON.parse(localStorage.getItem("vj-state") || "null"); if (saved) applyLayer(saved[layerSlot]); } catch (error) { console.warn(error); }
+    }
+    function applyLayer(next) { if (next) Object.assign(state, next); }
+    function getGlobalTime(now) { return (performance.timeOrigin + now) * 0.001; }
+    function kick(time) { const phase = (time * state.bpm / 60) % 1; return Math.pow(1 - phase, 6); }
+
+    const canvas = document.getElementById("canvas");
+    const gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: false });
+    let dpr = 1;
+
+    const VS = "attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }";
+    const FS = [
+      "precision highp float;",
+      "uniform vec2 u_res;",
+      "uniform float u_time, u_speed, u_beat, u_twist, u_density, u_hue;",
+      "vec3 hsv(float h, float s, float v){",
+      "  vec3 c = clamp(abs(mod(h*6.0 + vec3(0.0,4.0,2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);",
+      "  return v * mix(vec3(1.0), c, s);",
+      "}",
+      "void main(){",
+      "  vec2 uv = (gl_FragCoord.xy - 0.5*u_res) / u_res.y;",
+      "  float r = length(uv);",
+      "  float a = atan(uv.y, uv.x);",
+      "  float u = a/6.2831853 * u_density + u_twist*u_time;",
+      "  float v = 0.35/r + u_speed*u_time;",
+      "  float lu = smoothstep(0.46, 0.5, abs(fract(u)-0.5));",
+      "  float lv = smoothstep(0.46, 0.5, abs(fract(v)-0.5));",
+      "  float grid = max(lu, lv);",
+      "  float bright = (0.35 + u_beat*0.65) * grid;",
+      "  vec3 col = hsv(fract(u_hue + v*0.04), 0.85, bright);",
+      "  col += hsv(fract(u_hue + 0.5), 0.7, 0.05/r);",
+      "  col *= smoothstep(1.25, 0.15, r);",
+      "  gl_FragColor = vec4(col, 1.0);",
+      "}"
+    ].join("\n");
+
+    function compile(type, src) {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(sh));
+      return sh;
+    }
+    let U = {};
+    if (gl) {
+      const prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+      gl.linkProgram(prog);
+      gl.useProgram(prog);
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, "p");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      U = {
+        res: gl.getUniformLocation(prog, "u_res"),
+        time: gl.getUniformLocation(prog, "u_time"),
+        speed: gl.getUniformLocation(prog, "u_speed"),
+        beat: gl.getUniformLocation(prog, "u_beat"),
+        twist: gl.getUniformLocation(prog, "u_twist"),
+        density: gl.getUniformLocation(prog, "u_density"),
+        hue: gl.getUniformLocation(prog, "u_hue")
+      };
+    }
+
+    function resize() {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(window.innerWidth * dpr);
+      canvas.height = Math.floor(window.innerHeight * dpr);
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+
+    function draw(now) {
+      // The shader gets a SMALL time (seconds since load): a float32 uniform can't
+      // hold epoch-scale time without losing the per-pixel detail. Beat sync still
+      // uses global time, computed in JS (double precision).
+      const stime = now * 0.001;
+      if (gl) {
+        gl.uniform2f(U.res, canvas.width, canvas.height);
+        gl.uniform1f(U.time, stime);
+        gl.uniform1f(U.speed, 0.15 + state.speed / 45);
+        gl.uniform1f(U.beat, kick(getGlobalTime(now)) * state.beat / 100);
+        gl.uniform1f(U.twist, (state.twist - 50) / 60);
+        gl.uniform1f(U.density, 3.0 + state.density / 7);
+        gl.uniform1f(U.hue, state.hue / 360);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
+      requestAnimationFrame(draw);
+    }
+
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "vj-state" && event.data.state) applyLayer(event.data.state[layerSlot]);
+    });
+    window.addEventListener("storage", () => { syncStateFromStorage(); });
+    function syncStateFromHostWindow() { const hostState = readStateFromHostWindow(); if (hostState) applyLayer(hostState[layerSlot]); }
+
+    window.addEventListener("resize", resize);
+    resize();
+    requestAnimationFrame(draw);
+    syncStateFromHostWindow();
+    syncStateFromStorage();
+    requestStateFromHost();
+    window.setInterval(syncStateFromHostWindow, 120);
+    window.setInterval(syncStateFromStorage, 120);
+  </script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Diptych — Kaleido</title>
+  <title>Diptych — Plasma</title>
   <style>
     html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
     canvas { display: block; width: 100vw; height: 100vh; }
@@ -16,14 +16,14 @@
     {
       "id": "a",
       "title": "Layer A",
-      "badge": "Kaleido",
+      "badge": "Plasma",
       "controls": [
         { "key": "bpm", "label": "BPM", "type": "range", "min": 40, "max": 220, "step": 1, "default": 120 },
-        { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 60 },
-        { "key": "segments", "label": "Segments", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
+        { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 55 },
         { "key": "speed", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 45 },
-        { "key": "scale", "label": "Scale", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
-        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 40 }
+        { "key": "scale", "label": "Scale", "type": "range", "min": 0, "max": 100, "step": 1, "default": 45 },
+        { "key": "warp", "label": "Warp", "type": "range", "min": 0, "max": 100, "step": 1, "default": 40 },
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 300 }
       ]
     }
   </script>
@@ -43,12 +43,9 @@
       if (event.data && event.data.type === "request-vj-layer-protocol") postLayerProtocol();
     });
 
-    const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
     const protocolDefaults = (protocol) =>
       (protocol.controls || []).reduce((acc, control) => { acc[control.key] = control.default; return acc; }, {});
     const state = { ...protocolDefaults(runtimeProtocol) };
-    let dpr = 1;
 
     function requestStateFromHost() {
       const host = window.parent !== window ? window.parent : window.opener;
@@ -64,68 +61,88 @@
       try { const saved = JSON.parse(localStorage.getItem("vj-state") || "null"); if (saved) applyLayer(saved[layerSlot]); } catch (error) { console.warn(error); }
     }
     function applyLayer(next) { if (next) Object.assign(state, next); }
+    function getGlobalTime(now) { return (performance.timeOrigin + now) * 0.001; }
+    function kick(time) { const phase = (time * state.bpm / 60) % 1; return Math.pow(1 - phase, 6); }
+
+    const canvas = document.getElementById("canvas");
+    const gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: false });
+    let dpr = 1;
+
+    const VS = "attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }";
+    const FS = [
+      "precision highp float;",
+      "uniform vec2 u_res;",
+      "uniform float u_time, u_scale, u_warp, u_beat, u_hue;",
+      "vec3 hsv(float h, float s, float v){",
+      "  vec3 c = clamp(abs(mod(h*6.0 + vec3(0.0,4.0,2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);",
+      "  return v * mix(vec3(1.0), c, s);",
+      "}",
+      "void main(){",
+      "  vec2 uv = (gl_FragCoord.xy - 0.5*u_res) / u_res.y;",
+      "  float t = u_time;",
+      "  float s = u_scale;",
+      "  float v = sin(uv.x*s + t);",
+      "  v += sin(uv.y*s*1.3 - t*0.8);",
+      "  v += sin((uv.x + uv.y)*s*0.7 + t*1.1);",
+      "  v += sin(length(uv)*s*1.6 - t*1.3);",
+      "  v += u_warp * sin(length(uv*3.0) - t*2.0);",
+      "  float bright = (0.55 + 0.45*sin(v*3.14159)) * (0.6 + u_beat*0.4);",
+      "  vec3 col = hsv(fract(u_hue + v*0.08), 0.85, bright);",
+      "  gl_FragColor = vec4(col, 1.0);",
+      "}"
+    ].join("\n");
+
+    function compile(type, src) {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(sh));
+      return sh;
+    }
+    let U = {};
+    if (gl) {
+      const prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+      gl.linkProgram(prog);
+      gl.useProgram(prog);
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, "p");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      U = {
+        res: gl.getUniformLocation(prog, "u_res"),
+        time: gl.getUniformLocation(prog, "u_time"),
+        scale: gl.getUniformLocation(prog, "u_scale"),
+        warp: gl.getUniformLocation(prog, "u_warp"),
+        beat: gl.getUniformLocation(prog, "u_beat"),
+        hue: gl.getUniformLocation(prog, "u_hue")
+      };
+    }
+
     function resize() {
       dpr = Math.min(2, window.devicePixelRatio || 1);
       canvas.width = Math.floor(window.innerWidth * dpr);
       canvas.height = Math.floor(window.innerHeight * dpr);
       canvas.style.width = `${window.innerWidth}px`;
       canvas.style.height = `${window.innerHeight}px`;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-    function getGlobalTime(now) { return (performance.timeOrigin + now) * 0.001; }
-    function pulse(time) { const phase = (time * state.bpm / 60) % 1; return 1 + Math.pow(1 - phase, 6) * state.beat / 130; }
-
-    function drawMotif(t, R, scale, beat, wedge) {
-      // Moving blobs placed INSIDE the wedge; the caller clips to the wedge and
-      // mirrors/rotates the slices to build the kaleidoscope symmetry.
-      for (let i = 0; i < 7; i++) {
-        const ang = (0.15 + 0.7 * Math.abs(Math.sin(t * (0.3 + i * 0.17) + i * 1.3))) * wedge;
-        const rr = R * (0.1 + 0.55 * Math.abs(Math.sin(t * (0.5 + i * 0.11) + i))) * beat;
-        const x = Math.cos(ang) * rr;
-        const y = Math.sin(ang) * rr;
-        const hue = (state.hue + i * 30 + t * 22) % 360;
-        const size = (10 + i * 5) * scale;
-        const g = ctx.createRadialGradient(x, y, 0, x, y, size);
-        g.addColorStop(0, `hsla(${hue}, 90%, 66%, 0.85)`);
-        g.addColorStop(1, "hsla(0, 0%, 0%, 0)");
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(x, y, size, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
     }
 
     function draw(now) {
-      const t = now * 0.001;
-      const w = window.innerWidth, h = window.innerHeight;
-      const cx = w * 0.5, cy = h * 0.5;
-      const beat = pulse(getGlobalTime(now));
-      const segs = Math.round(4 + state.segments / 8); // mirror pairs (4..16)
-      const speed = 0.2 + state.speed / 50;
-      const scale = 0.5 + state.scale / 50;
-      const R = Math.hypot(w, h) / 2; // reach the corners
-      const wedge = Math.PI / segs;
-
-      ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
-      ctx.fillRect(0, 0, w, h);
-      ctx.globalCompositeOperation = "lighter";
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(t * speed * 0.12);
-      for (let i = 0; i < segs * 2; i++) {
-        ctx.save();
-        ctx.rotate(i * wedge);
-        if (i % 2 === 1) ctx.scale(1, -1); // mirror every other slice
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.arc(0, 0, R, 0, wedge);
-        ctx.closePath();
-        ctx.clip();
-        drawMotif(t, R, scale, beat, wedge);
-        ctx.restore();
+      // Small, float32-safe time for the shader (see warp-tunnel for why).
+      const time = now * 0.001 * (0.3 + state.speed / 40);
+      if (gl) {
+        gl.uniform2f(U.res, canvas.width, canvas.height);
+        gl.uniform1f(U.time, time);
+        gl.uniform1f(U.scale, 3.0 + state.scale / 6);
+        gl.uniform1f(U.warp, state.warp / 60);
+        gl.uniform1f(U.beat, kick(getGlobalTime(now)) * state.beat / 100);
+        gl.uniform1f(U.hue, state.hue / 360);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       }
-      ctx.restore();
-      ctx.globalCompositeOperation = "source-over";
       requestAnimationFrame(draw);
     }
 
