@@ -59,6 +59,8 @@
       try { return host.__vjState || null; } catch (error) { return null; }
     }
     function syncStateFromStorage() {
+      // Prefer the live host state; the stale localStorage fights it during Auto Mix.
+      if (readStateFromHostWindow()) return;
       try { const saved = JSON.parse(localStorage.getItem("vj-state") || "null"); if (saved) applyLayer(saved[layerSlot]); } catch (error) { console.warn(error); }
     }
     function applyLayer(next) { if (next) Object.assign(state, next); }

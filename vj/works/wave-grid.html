@@ -95,6 +95,8 @@
     }
 
     function syncStateFromStorage() {
+      // Prefer the live host state; the stale localStorage fights it during Auto Mix.
+      if (readStateFromHostWindow()) return;
       try {
         const saved = JSON.parse(localStorage.getItem("vj-state") || "null");
         if (saved) applyLayer(saved[layerSlot]);
