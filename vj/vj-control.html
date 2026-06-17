@@ -140,21 +140,103 @@
       grid-column: 1 / -1;
     }
 
-    .preview {
+    /* Preview + Layer A/B previews pinned together at the top while scrolling. */
+    .stage-pin {
       grid-column: 1 / -1;
+      position: sticky;
+      top: 8px;
+      z-index: 5;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: var(--bg);
+      padding-bottom: 4px;
+    }
+
+    .preview {
       border: 1px solid var(--line);
       background: var(--bg);
       border-radius: 8px;
       overflow: hidden;
-      /* Keep the preview pinned to the top while scrolling the controls. */
-      position: sticky;
-      top: 8px;
-      z-index: 5;
+      width: 100%;
+      max-width: 534px;
+      margin: 0 auto;
     }
 
     .layer-panels {
       display: contents;
     }
+
+    .layer-previews {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      /* Match the preview frame width so each layer card is ~half the preview. */
+      width: 100%;
+      max-width: 534px;
+      margin: 0 auto;
+    }
+
+    .layer-prev-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: rgba(23, 25, 31, 0.96);
+    }
+
+    .layer-prev-card[data-slot="a"] { border-top: 3px solid var(--layer-a); }
+    .layer-prev-card[data-slot="b"] { border-top: 3px solid var(--layer-b); }
+
+    .layer-prev-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      padding: 8px 12px;
+    }
+
+    .layer-prev-title { font-size: 12px; font-weight: 600; }
+    .layer-prev-card[data-slot="a"] .layer-prev-title { color: var(--layer-a); }
+    .layer-prev-card[data-slot="b"] .layer-prev-title { color: var(--layer-b); }
+
+    .layer-prev-badge {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .layer-prev-frame {
+      position: relative;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-top: 1px solid var(--line);
+    }
+
+    .layer-prev-frame iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+      background: #000;
+      pointer-events: none;
+    }
+
+    .layer-prev-empty {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .layer-prev-card.loaded .layer-prev-empty { display: none; }
 
     .protocol-loaders {
       position: absolute;
@@ -518,6 +600,7 @@
     </header>
 
     <main class="grid">
+      <div class="stage-pin">
       <section class="preview" aria-label="Preview">
         <div class="panel-head">
           <h2>Preview</h2>
@@ -536,6 +619,30 @@
           <div class="preview-note" id="previewNote">Embedded preview</div>
         </div>
       </section>
+
+      <section class="layer-previews" aria-label="Layer previews">
+        <div class="layer-prev-card" data-slot="a">
+          <div class="layer-prev-head">
+            <span class="layer-prev-title">Layer A</span>
+            <span class="layer-prev-badge" id="layerBadgeA">—</span>
+          </div>
+          <div class="layer-prev-frame">
+            <iframe id="layerPreviewA" title="Layer A preview" loading="lazy"></iframe>
+            <div class="layer-prev-empty">Empty</div>
+          </div>
+        </div>
+        <div class="layer-prev-card" data-slot="b">
+          <div class="layer-prev-head">
+            <span class="layer-prev-title">Layer B</span>
+            <span class="layer-prev-badge" id="layerBadgeB">—</span>
+          </div>
+          <div class="layer-prev-frame">
+            <iframe id="layerPreviewB" title="Layer B preview" loading="lazy"></iframe>
+            <div class="layer-prev-empty">Empty</div>
+          </div>
+        </div>
+      </section>
+      </div>
 
       <section class="mixer" aria-label="Mix">
         <div class="mixer-group">
@@ -626,6 +733,8 @@
         </div>
       </section>
 
+      <div class="layer-panels" id="layerPanels"></div>
+
       <section class="library panel" aria-label="Works">
         <div class="panel-head">
           <h2>Works</h2>
@@ -633,8 +742,6 @@
         </div>
         <div class="work-grid" id="workLibrary"></div>
       </section>
-
-      <div class="layer-panels" id="layerPanels"></div>
     </main>
   </div>
 
@@ -675,6 +782,18 @@
     const mixSlider = document.getElementById("mix");
     const mixOutput = document.querySelector('[data-out="mix"]');
     const workLibrary = document.getElementById("workLibrary");
+    const layerPreviewFrames = {
+      a: document.getElementById("layerPreviewA"),
+      b: document.getElementById("layerPreviewB")
+    };
+    const layerPreviewBadges = {
+      a: document.getElementById("layerBadgeA"),
+      b: document.getElementById("layerBadgeB")
+    };
+    const layerPreviewCards = {
+      a: document.querySelector('.layer-prev-card[data-slot="a"]'),
+      b: document.querySelector('.layer-prev-card[data-slot="b"]')
+    };
     let state = null;
     let layerProtocols = [];
     let workProtocolMap = {};
@@ -1017,6 +1136,28 @@
         card.querySelectorAll("[data-assign]").forEach((button) => {
           button.classList.toggle("active", state.sources[button.dataset.assign] === src);
         });
+      });
+      updateLayerPreviews();
+    }
+
+    function updateLayerPreviews() {
+      ["a", "b"].forEach((slot) => {
+        const src = state.sources[slot];
+        const frame = layerPreviewFrames[slot];
+        const card = layerPreviewCards[slot];
+        const badge = layerPreviewBadges[slot];
+        const protocol = layerProtocols[slot === "a" ? 0 : 1];
+        if (!frame || !card) return;
+        if (src) {
+          const next = buildSlottedWorkSrc(slot, src);
+          if (frame.getAttribute("src") !== next) frame.src = next;
+          card.classList.add("loaded");
+          if (badge) badge.textContent = protocol && protocol.badge ? protocol.badge : "";
+        } else {
+          if (frame.getAttribute("src") !== "about:blank") frame.src = "about:blank";
+          card.classList.remove("loaded");
+          if (badge) badge.textContent = "—";
+        }
       });
     }
 
