@@ -1685,7 +1685,9 @@
         renderLayerPanels(layerProtocols);
         state = createInitialState(layerProtocols);
         window.__vjState = state;
-        state.sources = { ...initialSources, ...(state.sources || {}) };
+        // initialSources is authoritative (saved values + removed-work fallback +
+        // null for empty layers) and layerProtocols was built from it — keep them in sync.
+        state.sources = initialSources;
         bindControlDelegation();
         updateReadouts();
         previewFrame.addEventListener("load", () => {
