@@ -14,8 +14,16 @@ window.VJ_WORKS = [
     "label": "Drift"
   },
   {
+    "src": "works/kaleido.html",
+    "label": "Kaleido"
+  },
+  {
     "src": "works/line-tunnel.html",
     "label": "Line tunnel"
+  },
+  {
+    "src": "works/lissajous.html",
+    "label": "Lissajous"
   },
   {
     "src": "works/moire.html",
@@ -30,12 +38,24 @@ window.VJ_WORKS = [
     "label": "Noise"
   },
   {
+    "src": "works/orbits.html",
+    "label": "Orbits"
+  },
+  {
     "src": "works/plasma-bloom.html",
     "label": "Plasma bloom"
   },
   {
+    "src": "works/rays.html",
+    "label": "Rays"
+  },
+  {
     "src": "works/rings.html",
     "label": "Rings"
+  },
+  {
+    "src": "works/spiral.html",
+    "label": "Spiral"
   },
   {
     "src": "works/strobe.html",
