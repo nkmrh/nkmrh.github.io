@@ -21,8 +21,7 @@
         { "key": "bpm", "label": "BPM", "type": "range", "min": 40, "max": 220, "step": 1, "default": 120 },
         { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 60 },
         { "key": "density", "label": "Density", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
-        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 210 },
-        { "key": "intensity", "label": "Intensity", "type": "range", "min": 0, "max": 100, "step": 1, "default": 85 }
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 210 }
       ]
     }
   </script>
@@ -81,7 +80,7 @@
     function draw(now) {
       const time = getGlobalTime(now);
       const w = window.innerWidth, h = window.innerHeight;
-      const intensity = state.intensity / 100;
+      const intensity = 1;
       const beat = pulse(time);
       const cols = Math.round(6 + state.density / 4);
       const rows = Math.max(2, Math.round(cols * h / w));

@@ -21,8 +21,7 @@
         { "key": "speed", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 35 },
         { "key": "count", "label": "Count", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
         { "key": "scale", "label": "Size", "type": "range", "min": 0, "max": 100, "step": 1, "default": 40 },
-        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 190 },
-        { "key": "intensity", "label": "Intensity", "type": "range", "min": 0, "max": 100, "step": 1, "default": 80 }
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 190 }
       ]
     }
   </script>
@@ -78,7 +77,7 @@
     function draw(now) {
       const time = getGlobalTime(now);
       const w = window.innerWidth, h = window.innerHeight;
-      const intensity = state.intensity / 100;
+      const intensity = 1;
       const count = Math.round(20 + state.count);
       const speed = 0.01 + state.speed / 400;
       const size = 1 + state.scale / 28;

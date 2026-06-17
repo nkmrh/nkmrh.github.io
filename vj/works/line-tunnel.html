@@ -34,7 +34,6 @@
         { "key": "scale", "label": "Scale", "type": "range", "min": 0, "max": 100, "step": 1, "default": 54 },
         { "key": "twist", "label": "Twist", "type": "range", "min": 0, "max": 100, "step": 1, "default": 48 },
         { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 310 },
-        { "key": "intensity", "label": "Intensity", "type": "range", "min": 0, "max": 100, "step": 1, "default": 82 },
         { "key": "motion", "label": "Motion", "type": "segmented", "default": "flow", "options": [
           { "value": "flow", "label": "Flow" },
           { "value": "pulse", "label": "Pulse" },
@@ -147,7 +146,7 @@
       const scale = 0.64 + state.scale / 70;
       const twistAmount = state.twist / 100;
       const beat = pulse(time);
-      const intensity = state.intensity / 100;
+      const intensity = 1;
 
       ctx.globalCompositeOperation = "source-over";
       ctx.fillStyle = "rgba(0, 0, 0, 0.23)";

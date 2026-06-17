@@ -22,8 +22,7 @@
         { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 55 },
         { "key": "speed", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 45 },
         { "key": "thickness", "label": "Thickness", "type": "range", "min": 0, "max": 100, "step": 1, "default": 30 },
-        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 280 },
-        { "key": "intensity", "label": "Intensity", "type": "range", "min": 0, "max": 100, "step": 1, "default": 85 }
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 280 }
       ]
     }
   </script>
@@ -83,7 +82,7 @@
       const time = getGlobalTime(now);
       const w = window.innerWidth, h = window.innerHeight;
       const cx = w * 0.5, cy = h * 0.5;
-      const intensity = state.intensity / 100;
+      const intensity = 1;
       const speed = 0.08 + state.speed / 140;
       const beat = pulse(time);
       const maxR = Math.hypot(w, h) / 2;

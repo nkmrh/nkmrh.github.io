@@ -444,6 +444,11 @@
     #switchAb.to-b { border-color: rgba(255, 207, 90, 0.5); }
     #switchAb.to-a { border-color: rgba(101, 214, 173, 0.5); }
 
+    .lbl-a { color: var(--layer-a); }
+    .lbl-b { color: var(--layer-b); }
+    #levelA { accent-color: var(--layer-a); }
+    #levelB { accent-color: var(--layer-b); }
+
     .mix-readout {
       margin-top: 6px;
       font-size: 12px;
@@ -548,6 +553,14 @@
               <button class="button" id="switchAb" type="button">Fade to B</button>
             </div>
             <div class="control">
+              <label class="lbl-a" for="levelA">Level A <output data-out="levelA">100</output></label>
+              <input id="levelA" data-key="levelA" type="range" min="0" max="100" step="1" value="100" />
+            </div>
+            <div class="control">
+              <label class="lbl-b" for="levelB">Level B <output data-out="levelB">100</output></label>
+              <input id="levelB" data-key="levelB" type="range" min="0" max="100" step="1" value="100" />
+            </div>
+            <div class="control">
               <label for="blendMode">Blend</label>
               <select id="blendMode" data-key="blendMode">
                 <option value="screen">Screen</option>
@@ -633,6 +646,8 @@
       mix: 50,
       blendMode: "screen",
       master: 100,
+      levelA: 100,
+      levelB: 100,
       blackout: false,
       sources: {
         a: "works/plasma-bloom.html",
@@ -1134,8 +1149,10 @@
       currentState = state;
       const mix = Math.max(0, Math.min(100, Number(state.mix))) / 100;
       const master = Math.max(0, Number(state.master)) / 100;
-      stage.style.setProperty("--opacity-a", 1 - mix);
-      stage.style.setProperty("--opacity-b", mix);
+      const levelA = Math.max(0, Math.min(100, Number(state.levelA == null ? 100 : state.levelA))) / 100;
+      const levelB = Math.max(0, Math.min(100, Number(state.levelB == null ? 100 : state.levelB))) / 100;
+      stage.style.setProperty("--opacity-a", (1 - mix) * levelA);
+      stage.style.setProperty("--opacity-b", mix * levelB);
       stage.style.setProperty("--blend", state.blendMode || "screen");
       stage.style.filter = master === 1 ? "none" : "brightness(" + master + ")";
       blackout.classList.toggle("active", Boolean(state.blackout));

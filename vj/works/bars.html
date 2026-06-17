@@ -22,8 +22,7 @@
         { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 60 },
         { "key": "speed", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 45 },
         { "key": "count", "label": "Bars", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
-        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 140 },
-        { "key": "intensity", "label": "Intensity", "type": "range", "min": 0, "max": 100, "step": 1, "default": 85 }
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 140 }
       ]
     }
   </script>
@@ -82,7 +81,7 @@
     function draw(now) {
       const time = getGlobalTime(now);
       const w = window.innerWidth, h = window.innerHeight;
-      const intensity = state.intensity / 100;
+      const intensity = 1;
       const count = Math.round(8 + state.count / 3);
       const speed = 0.2 + state.speed / 60;
       const k = kick(time) * state.beat / 200;

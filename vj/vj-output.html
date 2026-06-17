@@ -166,8 +166,10 @@
       window.__vjState = state;
       const mix = Math.max(0, Math.min(100, Number(state.mix))) / 100;
       const master = Math.max(0, Number(state.master)) / 100;
-      stage.style.setProperty("--opacity-a", 1 - mix);
-      stage.style.setProperty("--opacity-b", mix);
+      const levelA = Math.max(0, Math.min(100, Number(state.levelA ?? 100))) / 100;
+      const levelB = Math.max(0, Math.min(100, Number(state.levelB ?? 100))) / 100;
+      stage.style.setProperty("--opacity-a", (1 - mix) * levelA);
+      stage.style.setProperty("--opacity-b", mix * levelB);
       stage.style.setProperty("--blend", state.blendMode || "screen");
       // Only apply the brightness filter when it actually changes something.
       // filter:brightness(1) still forces the whole stage into an offscreen

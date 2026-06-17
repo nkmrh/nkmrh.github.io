@@ -60,7 +60,6 @@
         { "key": "bpm", "label": "BPM", "type": "range", "min": 40, "max": 220, "step": 1, "default": 120 },
         { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 60 },
         { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 200 },
-        { "key": "intensity", "label": "Intensity", "type": "range", "min": 0, "max": 100, "step": 1, "default": 80 },
         { "key": "motion", "label": "Motion", "type": "segmented", "default": "flow", "options": [
           { "value": "flow", "label": "Flow" },
           { "value": "pulse", "label": "Pulse" },
@@ -168,7 +167,7 @@
       const speed = 0.2 + state.speed / 80;
       const scale = 0.6 + state.scale / 80;
       const beat = pulse(time);
-      const intensity = state.intensity / 100;
+      const intensity = 1;
 
       // 残像のためのフェード(自分の表現に合わせて変更可)。
       ctx.globalCompositeOperation = "source-over";

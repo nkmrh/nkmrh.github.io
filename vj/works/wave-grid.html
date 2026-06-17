@@ -35,7 +35,6 @@
         { "key": "bpm", "label": "BPM", "type": "range", "min": 40, "max": 220, "step": 1, "default": 110 },
         { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 60 },
         { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 150 },
-        { "key": "intensity", "label": "Intensity", "type": "range", "min": 0, "max": 100, "step": 1, "default": 80 },
         { "key": "motion", "label": "Motion", "type": "segmented", "default": "flow", "options": [
           { "value": "flow", "label": "Flow" },
           { "value": "pulse", "label": "Pulse" },
@@ -136,7 +135,7 @@
       const w = window.innerWidth;
       const h = window.innerHeight;
       const beat = pulse(time);
-      const intensity = state.intensity / 100;
+      const intensity = 1;
       const speed = 0.2 + state.speed / 60;
       const cols = Math.round(8 + state.density / 4);          // 8..33 列
       const rows = Math.max(2, Math.round(cols * h / w));
