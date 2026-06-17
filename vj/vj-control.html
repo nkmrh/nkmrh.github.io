@@ -171,6 +171,14 @@
       overflow: hidden;
     }
 
+    .panel-empty { opacity: 0.6; }
+
+    .empty-note {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
     .panel-head {
       padding: 13px 14px;
       border-bottom: 1px solid var(--line);
@@ -561,7 +569,7 @@
       <section class="library panel" aria-label="Works">
         <div class="panel-head">
           <h2>Works</h2>
-          <span class="badge">Tap A or B to load into a layer</span>
+          <span class="badge">Tap A / B to load · tap the lit one again to clear</span>
         </div>
         <div class="work-grid" id="workLibrary"></div>
       </section>
@@ -800,6 +808,12 @@
       return matchedKey ? workProtocolMap[matchedKey] : null;
     }
 
+    function buildLayerProtocol(slot, sourceSrc) {
+      if (!sourceSrc) return null;
+      const raw = resolveWorkProtocol(sourceSrc);
+      return raw ? normalizeProtocol(raw, slot, sourceSrc) : null;
+    }
+
     function protocolDefaults(protocol) {
       const defaults = {};
       (protocol.controls || []).forEach((control) => {
@@ -811,7 +825,7 @@
     function buildDefaultState(protocols) {
       const defaults = cloneJson(BASE_STATE);
       protocols.forEach((protocol) => {
-        defaults[protocol.id] = protocolDefaults(protocol);
+        if (protocol) defaults[protocol.id] = protocolDefaults(protocol);
       });
       return defaults;
     }
@@ -829,7 +843,7 @@
           autoMix: { ...defaults.autoMix, ...(saved.autoMix || {}) }
         };
         protocols.forEach((protocol) => {
-          next[protocol.id] = { ...defaults[protocol.id], ...(saved[protocol.id] || {}) };
+          if (protocol) next[protocol.id] = { ...defaults[protocol.id], ...(saved[protocol.id] || {}) };
         });
         return next;
       } catch (error) {
@@ -849,7 +863,21 @@
     }
 
     function renderLayerPanels(protocols) {
-      layerPanels.innerHTML = protocols.map((protocol) => {
+      layerPanels.innerHTML = protocols.map((protocol, index) => {
+        const slot = index === 0 ? "a" : "b";
+        if (!protocol) {
+          return `
+          <section class="panel panel-empty" data-layer="${slot}">
+            <div class="panel-head">
+              <h2>${slotTitle(slot)}</h2>
+              <span class="badge">Empty</span>
+            </div>
+            <div class="controls">
+              <p class="empty-note">No work loaded — pick one in Works.</p>
+            </div>
+          </section>
+        `;
+        }
         const controls = protocol.controls.map((control) => renderLayerControl(protocol, control)).join("");
         const tapControl = protocol.tapTempoLabel ? `
           <div class="control wide">
@@ -953,11 +981,13 @@
     }
 
     async function handleWorkSelection(slot, value) {
-      state.sources[slot] = value;
+      // Tapping the work already loaded into this slot clears it (empty layer).
+      const next = state.sources[slot] === value ? null : value;
+      state.sources[slot] = next;
       updateLibrary();
       send();
       try {
-        await reloadSlotProtocol(slot, value);
+        await reloadSlotProtocol(slot, next);
       } catch (error) {
         console.error(error);
         document.getElementById("status").textContent = `Failed to load ${slotTitle(slot)} work: ${error.message}`;
@@ -1110,13 +1140,22 @@
       stage.style.filter = master === 1 ? "none" : "brightness(" + master + ")";
       blackout.classList.toggle("active", Boolean(state.blackout));
       if (state.sources) {
-        const nextSourceA = state.sources.a ? buildSlottedWorkSrc("a", state.sources.a) : null;
-        const nextSourceB = state.sources.b ? buildSlottedWorkSrc("b", state.sources.b) : null;
-        if (nextSourceA && layerA.getAttribute("src") !== nextSourceA) layerA.src = nextSourceA;
-        if (nextSourceB && layerB.getAttribute("src") !== nextSourceB) layerB.src = nextSourceB;
+        applyLayerSource(layerA, "a", state.sources.a);
+        applyLayerSource(layerB, "b", state.sources.b);
       }
       postStateToLayer(layerA);
       postStateToLayer(layerB);
+    }
+
+    function applyLayerSource(frame, slot, src) {
+      if (!src) {
+        if (frame.getAttribute("src") !== "about:blank") frame.src = "about:blank";
+        frame.style.display = "none";
+        return;
+      }
+      const next = buildSlottedWorkSrc(slot, src);
+      if (frame.getAttribute("src") !== next) frame.src = next;
+      frame.style.display = "";
     }
 
     function updateFullscreenButton() {
@@ -1413,10 +1452,13 @@
       startMixTransition(state.mix < 50 ? 100 : 0);
     });
 
-    document.getElementById("reset").addEventListener("click", () => {
+    document.getElementById("reset").addEventListener("click", async () => {
       Object.assign(state, buildDefaultState(layerProtocols), { sources: { ...BASE_STATE.sources } });
       updateReadouts();
       send();
+      // Reload both layers so the panels match the reset sources.
+      await reloadSlotProtocol("a", state.sources.a);
+      await reloadSlotProtocol("b", state.sources.b);
     });
 
     window.addEventListener("message", (event) => {
@@ -1431,6 +1473,15 @@
 
     async function reloadSlotProtocol(slot, sourceSrc) {
       const index = slot === "a" ? 0 : 1;
+      if (!sourceSrc) {
+        // Empty layer: no protocol, no controls.
+        layerProtocols[index] = null;
+        delete state[slot];
+        renderLayerPanels(layerProtocols);
+        updateReadouts();
+        send();
+        return;
+      }
       const rawProtocol = resolveWorkProtocol(sourceSrc);
       if (!rawProtocol) throw new Error(`Unknown work source: ${sourceSrc}`);
       const protocol = normalizeProtocol(rawProtocol, slot, sourceSrc);
@@ -1452,20 +1503,21 @@
         } catch (error) {
           savedSources = null;
         }
-        const initialSources = {
-          a: savedSources && savedSources.a ? savedSources.a : BASE_STATE.sources.a,
-          b: savedSources && savedSources.b ? savedSources.b : BASE_STATE.sources.b
-        };
+        // If there's saved state, honor it verbatim — including null (= empty layer).
+        // Only a fresh load (no saved state) defaults both slots to a work.
+        const initialSources = savedSources
+          ? { a: savedSources.a ?? null, b: savedSources.b ?? null }
+          : { a: BASE_STATE.sources.a, b: BASE_STATE.sources.b };
         workProtocolMap = await loadWorkProtocolMap();
-        // A saved/default source may point at a work that was removed from the list.
-        // Fall back to existing works so the page still loads.
+        // A non-empty source may point at a work that was removed from the list.
+        // Fall back to an existing work so the page still loads (null stays empty).
         const workSrcs = new Set(WORK_OPTIONS.map((work) => work.src));
-        if (!workSrcs.has(initialSources.a)) initialSources.a = WORK_OPTIONS[0].src;
-        if (!workSrcs.has(initialSources.b)) initialSources.b = (WORK_OPTIONS[1] || WORK_OPTIONS[0]).src;
+        if (initialSources.a && !workSrcs.has(initialSources.a)) initialSources.a = WORK_OPTIONS[0].src;
+        if (initialSources.b && !workSrcs.has(initialSources.b)) initialSources.b = (WORK_OPTIONS[1] || WORK_OPTIONS[0]).src;
         loadPreviewOutput();
         layerProtocols = [
-          normalizeProtocol(workProtocolMap[initialSources.a], "a", initialSources.a),
-          normalizeProtocol(workProtocolMap[initialSources.b], "b", initialSources.b)
+          buildLayerProtocol("a", initialSources.a),
+          buildLayerProtocol("b", initialSources.b)
         ];
         renderLayerPanels(layerProtocols);
         state = createInitialState(layerProtocols);

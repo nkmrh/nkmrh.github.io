@@ -175,13 +175,23 @@
       stage.style.filter = master === 1 ? "none" : `brightness(${master})`;
       blackout.classList.toggle("active", Boolean(state.blackout));
       if (state.sources) {
-        const nextSourceA = state.sources.a ? buildSlottedWorkSrc("a", state.sources.a) : null;
-        const nextSourceB = state.sources.b ? buildSlottedWorkSrc("b", state.sources.b) : null;
-        if (nextSourceA && layerA.getAttribute("src") !== nextSourceA) layerA.src = nextSourceA;
-        if (nextSourceB && layerB.getAttribute("src") !== nextSourceB) layerB.src = nextSourceB;
+        applyLayerSource(layerA, "a", state.sources.a);
+        applyLayerSource(layerB, "b", state.sources.b);
       }
       postStateToLayer(layerA);
       postStateToLayer(layerB);
+    }
+
+    function applyLayerSource(frame, slot, src) {
+      // Empty layer: unload the work and hide the iframe so it contributes nothing.
+      if (!src) {
+        if (frame.getAttribute("src") !== "about:blank") frame.src = "about:blank";
+        frame.style.display = "none";
+        return;
+      }
+      const next = buildSlottedWorkSrc(slot, src);
+      if (frame.getAttribute("src") !== next) frame.src = next;
+      frame.style.display = "";
     }
 
     function updateFullscreenButton() {
