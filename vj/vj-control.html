@@ -363,13 +363,13 @@
       border-bottom: 1px solid var(--line);
     }
 
-    .work-thumb iframe {
+    .work-thumb img {
       width: 100%;
       height: 100%;
+      object-fit: cover;
       border: 0;
       display: block;
       background: #000;
-      pointer-events: none;
     }
 
     .work-card-foot {
@@ -871,10 +871,14 @@
     }
 
     function renderWorkLibrary() {
-      workLibrary.innerHTML = WORK_OPTIONS.map((work) => `
+      // Static thumbnails (works/thumbs/<name>.png) keep the grid light. Regenerate
+      // with: node vj/build-thumbs.js
+      workLibrary.innerHTML = WORK_OPTIONS.map((work) => {
+        const thumb = `works/thumbs/${work.src.split("/").pop().replace(/\.html$/, ".png")}`;
+        return `
         <div class="work-card" data-src="${work.src}">
           <div class="work-thumb">
-            <iframe src="${work.src}" title="${work.label} preview" loading="lazy"></iframe>
+            <img src="${thumb}" alt="${work.label}" loading="lazy" onerror="this.style.display='none'" />
           </div>
           <div class="work-card-foot">
             <span class="work-card-label">${work.label}</span>
@@ -884,7 +888,8 @@
             </div>
           </div>
         </div>
-      `).join("");
+      `;
+      }).join("");
     }
 
     function bindWorkLibrary() {

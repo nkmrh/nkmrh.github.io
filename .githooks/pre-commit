@@ -1,6 +1,6 @@
 #!/bin/sh
-# Regenerate the VJ work list from vj/works/ and stage it, so works-list.js
-# always matches the directory without manual edits to WORK_OPTIONS.
+# Regenerate the VJ work list and thumbnails from vj/works/ and stage them, so
+# works-list.js and works/thumbs/ always match the directory.
 # Enable once per clone with:  git config core.hooksPath .githooks
 
 if command -v node >/dev/null 2>&1; then
@@ -9,6 +9,14 @@ if command -v node >/dev/null 2>&1; then
     exit 1
   }
   git add vj/works/works-list.js
+
+  # Incremental: only renders new/changed works, removes deleted ones, and skips
+  # if Chrome is missing — so it won't slow down or block unrelated commits.
+  node vj/build-thumbs.js || {
+    echo "pre-commit: vj/build-thumbs.js failed; aborting commit." >&2
+    exit 1
+  }
+  git add -A vj/works/thumbs
 else
-  echo "pre-commit: node not found, skipping vj/build-works.js" >&2
+  echo "pre-commit: node not found, skipping vj build steps" >&2
 fi
