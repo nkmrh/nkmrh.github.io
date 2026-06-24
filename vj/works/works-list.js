@@ -2,6 +2,10 @@
 // Regenerate with: node vj/build-works.js
 window.VJ_WORKS = [
   {
+    "src": "works/aurora.html",
+    "label": "Aurora"
+  },
+  {
     "src": "works/bars.html",
     "label": "Bars"
   },
@@ -28,6 +32,10 @@ window.VJ_WORKS = [
   {
     "src": "works/flow.html",
     "label": "Flow"
+  },
+  {
+    "src": "works/halftone.html",
+    "label": "Halftone"
   },
   {
     "src": "works/hex.html",
