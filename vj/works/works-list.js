@@ -66,6 +66,10 @@ window.VJ_WORKS = [
     "label": "Rings"
   },
   {
+    "src": "works/seeds.html",
+    "label": "Seeds"
+  },
+  {
     "src": "works/spiral.html",
     "label": "Spiral"
   },
