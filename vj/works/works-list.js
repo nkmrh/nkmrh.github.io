@@ -46,6 +46,10 @@ window.VJ_WORKS = [
     "label": "Grid"
   },
   {
+    "src": "works/nebula.html",
+    "label": "Nebula"
+  },
+  {
     "src": "works/noise.html",
     "label": "Noise"
   },
