@@ -10,6 +10,10 @@ window.VJ_WORKS = [
     "label": "Checker"
   },
   {
+    "src": "works/contours.html",
+    "label": "Contours"
+  },
+  {
     "src": "works/drift.html",
     "label": "Drift"
   },
@@ -72,6 +76,10 @@ window.VJ_WORKS = [
   {
     "src": "works/spiral.html",
     "label": "Spiral"
+  },
+  {
+    "src": "works/starfield.html",
+    "label": "Starfield"
   },
   {
     "src": "works/strobe.html",
