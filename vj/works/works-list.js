@@ -26,6 +26,10 @@ window.VJ_WORKS = [
     "label": "Flow"
   },
   {
+    "src": "works/hex.html",
+    "label": "Hex"
+  },
+  {
     "src": "works/kaleido.html",
     "label": "Kaleido"
   },
