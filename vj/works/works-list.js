@@ -6,6 +6,10 @@ window.VJ_WORKS = [
     "label": "Bars"
   },
   {
+    "src": "works/bolt.html",
+    "label": "Bolt"
+  },
+  {
     "src": "works/checker.html",
     "label": "Checker"
   },
