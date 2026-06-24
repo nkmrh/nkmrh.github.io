@@ -78,6 +78,10 @@ window.VJ_WORKS = [
     "label": "Rings"
   },
   {
+    "src": "works/ripples.html",
+    "label": "Ripples"
+  },
+  {
     "src": "works/seeds.html",
     "label": "Seeds"
   },
@@ -102,6 +106,10 @@ window.VJ_WORKS = [
     "label": "Truchet"
   },
   {
+    "src": "works/voronoi.html",
+    "label": "Voronoi"
+  },
+  {
     "src": "works/warp-tunnel.html",
     "label": "Tunnel"
   },
@@ -112,5 +120,9 @@ window.VJ_WORKS = [
   {
     "src": "works/wipe.html",
     "label": "Wipe"
+  },
+  {
+    "src": "works/wireframe.html",
+    "label": "Wireframe"
   }
 ];
