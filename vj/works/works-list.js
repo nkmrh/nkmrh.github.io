@@ -78,6 +78,10 @@ window.VJ_WORKS = [
     "label": "Sweep"
   },
   {
+    "src": "works/truchet.html",
+    "label": "Truchet"
+  },
+  {
     "src": "works/warp-tunnel.html",
     "label": "Tunnel"
   },
