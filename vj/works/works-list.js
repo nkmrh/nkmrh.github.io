@@ -38,6 +38,10 @@ window.VJ_WORKS = [
     "label": "Halftone"
   },
   {
+    "src": "works/helix.html",
+    "label": "Helix"
+  },
+  {
     "src": "works/hex.html",
     "label": "Hex"
   },
