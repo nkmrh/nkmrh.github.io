@@ -58,6 +58,10 @@ window.VJ_WORKS = [
     "label": "Lissajous"
   },
   {
+    "src": "works/mandala.html",
+    "label": "Mandala"
+  },
+  {
     "src": "works/moire.html",
     "label": "Moiré"
   },
