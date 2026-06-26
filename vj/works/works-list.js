@@ -58,6 +58,10 @@ window.VJ_WORKS = [
     "label": "Flow"
   },
   {
+    "src": "works/gyro.html",
+    "label": "Gyro"
+  },
+  {
     "src": "works/halftone.html",
     "label": "Halftone"
   },
