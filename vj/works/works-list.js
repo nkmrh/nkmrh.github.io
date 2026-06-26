@@ -46,6 +46,10 @@ window.VJ_WORKS = [
     "label": "Feedback"
   },
   {
+    "src": "works/fire.html",
+    "label": "Fire"
+  },
+  {
     "src": "works/flow.html",
     "label": "Flow"
   },
