@@ -193,64 +193,119 @@
         return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
       }
       float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++){ v += a * noise(p); p = p * 2.04 + 1.7; a *= 0.5; } return v; }
+      float vor(vec2 x){ vec2 g = floor(x), f = fract(x); float md = 8.0; for (int j=-1;j<=1;j++) for (int i=-1;i<=1;i++){ vec2 o=vec2(float(i),float(j)); vec2 rr=o+vec2(hash(g+o),hash(g+o+3.1))-f; md=min(md,dot(rr,rr)); } return sqrt(md); }
       vec3 hsv(float h, float s, float v){ vec3 c = clamp(abs(mod(h*6.0 + vec3(0.0,4.0,2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0); return v * mix(vec3(1.0), c, s); }
       mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
     `;
 
-    // ---- M3: module library. A "recipe" picks one warp + two injects + one blend.
-    // The feedback fragment shader is assembled & compiled per recipe (cached), so the
-    // STRUCTURE of the visual changes — not just its parameters.
+    // ---- M3b: on-the-fly GLSL synthesis. Instead of recombining hand-written
+    // modules, we GENERATE the warp + field expressions from a typed grammar
+    // (scalar S / vec2 V). Typing guarantees the GLSL always compiles; the space
+    // of producible structures is effectively infinite. Each seed = a unique shader.
     const FB_HEAD = HELP + `
       uniform sampler2D u_prev;
       uniform vec2 u_res;
       uniform float u_time, u_bass, u_mid, u_high, u_level, u_onset, u_centroid;
-      uniform float u_react, u_decay, u_hue, u_flow, u_seed, u_sym, u_p0, u_p1;
+      uniform float u_react, u_decay, u_hue, u_flow, u_seed;
     `;
-    // warp: map current pixel -> coordinate to sample the previous frame
-    const WARP = {
-      W_tunnel: "vec2 W_tunnel(vec2 c,float asp){float z=1.0-(0.006+u_bass*0.05*u_react);float an=(0.012+u_mid*0.10*u_react)*u_flow;vec2 t=rot(an)*c*z;t.x/=asp;return t+0.5;}",
-      W_spiral: "vec2 W_spiral(vec2 c,float asp){float z=1.0-(0.004+u_bass*0.04*u_react);float an=(0.05+u_mid*0.22*u_react)*u_flow;vec2 t=rot(an)*c*z;t.x/=asp;return t+0.5;}",
-      W_zoomout: "vec2 W_zoomout(vec2 c,float asp){float z=1.0+(0.004+u_bass*0.03*u_react);vec2 t=rot(0.01*u_flow)*c*z;t.x/=asp;return t+0.5;}",
-      W_mirror: "vec2 W_mirror(vec2 c,float asp){c.x=abs(c.x);float z=1.0-(0.006+u_bass*0.04*u_react);vec2 t=c*z;t.x/=asp;return t+0.5;}",
-      W_drift: "vec2 W_drift(vec2 c,float asp){float z=1.0-(0.004+u_bass*0.03*u_react);vec2 t=c*z+vec2(0.005*sin(u_time*0.3+u_seed*6.0),0.005*cos(u_time*0.27))*u_flow;t.x/=asp;return t+0.5;}",
-      W_polar: "vec2 W_polar(vec2 c,float asp){float r=length(c),a=atan(c.y,c.x);r*=1.0-(0.006+u_bass*0.04*u_react);a+=(0.02+u_mid*0.1*u_react)*u_flow;vec2 t=vec2(cos(a),sin(a))*r;t.x/=asp;return t+0.5;}"
-    };
-    // inject: return vec2(intensity, hueLocal) of new structure to add
-    const INJ = {
-      I_none: "vec2 I_none(vec2 c,float r,float a){return vec2(0.0);}",
-      I_filaments: "vec2 I_filaments(vec2 c,float r,float a){float a2=abs(mod(a,6.2831/u_sym)-3.1415/u_sym);vec2 p=vec2(cos(a2),sin(a2))*r*(2.5+u_p0*3.0);float n=fbm(p+u_time*0.25*u_flow+u_seed*10.0);float fil=smoothstep(0.5,0.44,abs(fract(n*4.0)-0.5));return vec2(fil*(0.35+u_level*0.9),n);}",
-      I_spokes: "vec2 I_spokes(vec2 c,float r,float a){float s=pow(0.5+0.5*sin(a*u_sym*2.0+u_time*u_flow),6.0);return vec2(s*(0.2+u_mid*0.7),a/6.2831);}",
-      I_rings: "vec2 I_rings(vec2 c,float r,float a){float ripple=fract(r*(1.0+u_p0*2.0)-u_time*(0.4+u_high)*u_flow);return vec2(smoothstep(0.08,0.0,abs(ripple-0.5))*(0.3+u_onset),r);}",
-      I_blobs: "vec2 I_blobs(vec2 c,float r,float a){float n=fbm(c*(2.0+u_p0*4.0)+u_time*0.2*u_flow+u_seed*7.0);return vec2(smoothstep(0.55,0.78,n)*(0.3+u_level*0.7),n);}",
-      I_grid: "vec2 I_grid(vec2 c,float r,float a){vec2 g=abs(fract(c*(3.0+u_p0*6.0)+u_time*0.1*u_flow)-0.5);return vec2(smoothstep(0.46,0.5,max(g.x,g.y))*(0.2+u_mid*0.6),c.x+c.y);}",
-      I_cells: "vec2 I_cells(vec2 c,float r,float a){vec2 uv=c*(2.0+u_p0*4.0);vec2 gg=floor(uv),f=fract(uv);float md=8.0;for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){vec2 o=vec2(float(i),float(j));vec2 pp=gg+o;vec2 rnd=vec2(hash(pp),hash(pp+3.1));vec2 rr=o+0.5+0.5*sin(u_time*u_flow+6.2831*rnd)-f;md=min(md,dot(rr,rr));}return vec2((1.0-smoothstep(0.0,0.5,md))*(0.25+u_level*0.6),md);}"
-    };
-    const BLEND = {
-      B_max: "vec3 B_max(vec3 p,vec3 i){return max(p,i);}",
-      B_screen: "vec3 B_screen(vec3 p,vec3 i){return 1.0-(1.0-p)*(1.0-i);}"
-    };
-    function assembleFB(recipe) {
-      const keys = [["W", recipe.warp], ["I", recipe.inj1], ["I", recipe.inj2], ["B", recipe.blend]];
-      const seen = {}; let funcs = "";
-      for (const [kind, name] of keys) {
-        if (seen[name]) continue; seen[name] = 1;
-        funcs += (kind === "W" ? WARP : kind === "I" ? INJ : BLEND)[name] + "\n";
-      }
-      return FB_HEAD + funcs + `
+    function mulberry32(seed) {
+      let s = seed >>> 0;
+      return function () { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    }
+    // Generate a full feedback fragment shader from a seed. Five independent
+    // dimensions are generated and combined — symmetry, domain warp, a small
+    // scalar "DNA" field, a PATTERN operator (the shape language), a feedback
+    // transform and a palette — so the output spans many topologies (grids,
+    // cells, stripes, rings, tunnels, tiles…), not just mandala/marble.
+    function genGLSL(seed) {
+      const R = mulberry32(seed);
+      const ri = (n) => Math.floor(R() * n);
+      const cf = (lo, hi) => (lo + R() * (hi - lo)).toFixed(3);
+      // small generated scalar field (per-seed "DNA" that perturbs the pattern)
+      const termS = () => ["r", "a", "(u_time*" + cf(0.05, 0.3) + ")", "u_bass", "u_mid", "u_high", "u_level", "u_centroid", cf(-1.5, 1.5)][ri(9)];
+      const termV = () => ["c", "q", "vec2(" + cf(-1, 1) + "," + cf(-1, 1) + ")"][ri(3)];
+      function genV(d) { if (d <= 0 || R() < 0.5) return termV(); const k = ri(3);
+        if (k === 0) return "vec2(" + genS(d - 1) + "," + genS(d - 1) + ")";
+        if (k === 1) return "(rot(" + genS(d - 1) + ")*" + termV() + ")";
+        return "(" + genV(d - 1) + "+" + genV(d - 1) + ")"; }
+      function genS(d) { if (d <= 0 || R() < 0.5) return termS(); const k = ri(6);
+        if (k === 0) return "sin(" + genS(d - 1) + "*" + cf(0.8, 4.0) + ")";
+        if (k === 1) return "cos(" + genS(d - 1) + "*" + cf(0.8, 4.0) + ")";
+        if (k === 2) return "fbm(" + genV(d - 1) + ")";
+        if (k === 3) return "(" + genS(d - 1) + "*" + genS(d - 1) + ")";
+        if (k === 4) return "abs(" + genS(d - 1) + ")";
+        return "length(" + genV(d - 1) + ")"; }
+
+      // 1) symmetry applied to the working coord c
+      const symN = 3 + ri(8), symKind = ri(6);
+      const SYM = ["",
+        "c.x = abs(c.x);",
+        "c = abs(c);",
+        "{ float an = atan(c.y, c.x), rr = length(c); an = abs(mod(an, 6.2831/" + symN + ".0) - 3.1415/" + symN + ".0); c = vec2(cos(an), sin(an)) * rr; }",
+        "{ float an = atan(c.y, c.x), rr = length(c); an = mod(an, 6.2831/" + symN + ".0); c = vec2(cos(an), sin(an)) * rr; }",
+        "c = abs(fract(c * " + cf(0.8, 1.8) + ") - 0.5);"][symKind];
+      const symName = ["free", "mirror", "quad", "kaleido" + symN, "wedge" + symN, "tile"][symKind];
+
+      // 2) domain warp -> q (the coordinate the pattern reads)
+      const q = "(rot(" + cf(-0.6, 0.6) + ") * c * " + cf(1.0, 4.0) + " + " + cf(0.0, 0.45) + " * vec2(fbm(c*" + cf(1, 3) + "+u_time*0.05*u_flow), fbm(c*" + cf(1, 3) + "+5.0)))";
+
+      // 3) the DNA field
+      const gd = genS(3);
+
+      // 4) PATTERN operator (shape language) reading q + gd -> intensity ~[0,1]
+      const F = cf(2, 10), N = cf(2, 6), dir = "vec2(" + cf(-1, 1) + "," + cf(-1, 1) + ")";
+      const pat = ri(8);
+      const PAT = [
+        "0.5 + 0.5*sin(dot(q," + dir + ")*" + F + " + gd*" + cf(1, 4) + " + u_time*0.3*u_flow)",        // stripes
+        "0.5 + 0.5*sin(length(q)*" + F + " - u_time*(0.4+u_high)*u_flow + gd)",                          // rings
+        "smoothstep(0.5, 0.45, max(abs(fract(q+gd*0.15)-0.5).x, abs(fract(q)-0.5).y))",                  // grid
+        "(1.0 - smoothstep(0.0, " + cf(0.3, 0.6) + ", vor(q + gd*0.1)))",                                // cells
+        "smoothstep(0.5, 0.42, abs(fract(fbm(q)*" + N + ")-0.5))",                                       // marble
+        "smoothstep(" + cf(0.22, 0.42) + ", 0.0, length(fract(q)-0.5))",                                 // dots
+        "step(0.0, sin(q.x*" + F + "+gd) * sin(q.y*" + F + "))",                                         // checker
+        "0.5 + 0.5*sin(atan(q.y,q.x)*" + symN + ".0 + length(q)*" + F + " + u_time*u_flow)"              // spokes
+      ][pat];
+      const patName = ["stripes", "rings", "grid", "cells", "marble", "dots", "checker", "spokes"][pat];
+      const G = cf(1.0, 3.5);
+
+      // 5) feedback transform family (uses original coord cc)
+      const fbk = ri(6), za = cf(0.003, 0.018);
+      const FB = [
+        "vec2 tc = rot((0.01 + u_mid*0.1*u_react)*u_flow) * cc * (1.0 - (" + za + " + u_bass*0.05*u_react)); tc.x /= asp;",
+        "vec2 tc = rot(0.01*u_flow) * cc * (1.0 + (" + za + " + u_bass*0.03*u_react)); tc.x /= asp;",
+        "vec2 tc = rot((0.03 + u_mid*0.2*u_react)*u_flow) * cc * (1.0 - " + za + "); tc.x /= asp;",
+        "vec2 tc = cc*(1.0 - " + za + ") + vec2(" + cf(-0.012, 0.012) + ", " + cf(-0.012, 0.012) + ")*u_flow; tc.x /= asp;",
+        "vec2 tc; { float rr = length(cc)*(1.0-(" + za + "+u_bass*0.04*u_react)), an = atan(cc.y,cc.x)+(0.02+u_mid*0.1*u_react)*u_flow; tc = vec2(cos(an),sin(an))*rr; tc.x /= asp; }",
+        "vec2 tc = mat2(1.0, " + cf(-0.12, 0.12) + ", 0.0, 1.0) * cc * (1.0 - (" + za + "+u_bass*0.03)); tc.x /= asp;"][fbk];
+      const fbName = ["tunnel", "zoomout", "rotate", "scroll", "polar", "shear"][fbk];
+
+      // 6) palette
+      const HUE = ["length(q)*0.12", "atan(c.y,c.x)/6.2831", "gd*0.3", "r*0.25", "v*0.4"][ri(5)];
+      const sat = cf(0.55, 0.95);
+      const blend = R() < 0.5 ? "max(prev, injc)" : "(1.0 - (1.0 - prev) * (1.0 - injc))";
+
+      const src = FB_HEAD + `
       void main(){
-        vec2 uv = gl_FragCoord.xy / u_res;
-        float asp = u_res.x / u_res.y;
-        vec2 c = uv - 0.5; c.x *= asp;
-        vec3 prev = texture2D(u_prev, ${recipe.warp}(c, asp)).rgb * u_decay;
+        vec2 uv = gl_FragCoord.xy / u_res; float asp = u_res.x / u_res.y;
+        vec2 cc = uv - 0.5; cc.x *= asp;
+        vec2 c = cc;
+        ${SYM}
         float r = length(c), a = atan(c.y, c.x);
-        vec2 e1 = ${recipe.inj1}(c, r, a);
-        vec2 e2 = ${recipe.inj2}(c, r, a);
-        float inj = clamp(e1.x + e2.x, 0.0, 1.0);
-        float hue = fract(u_hue + u_centroid * 0.35 + (e1.y * 0.5 + e2.y * 0.5) * 0.3 + r * 0.15 + u_p1);
-        vec3 injc = hsv(hue, 0.82, inj);
-        vec3 col = ${recipe.blend}(prev * u_decay, injc);
+        vec2 q = ${q};
+        float gd = ${gd};
+        float v = pow(clamp(${PAT}, 0.0, 1.0), ${G});
+        float inj = v * (0.3 + u_level * 0.85);
+        inj += u_onset * smoothstep(0.07, 0.0, abs(fract(r*2.0 - u_time*0.5*u_flow) - 0.5)) * 0.5;
+        inj = clamp(inj, 0.0, 1.0);
+        float hue = fract(u_hue + (${HUE}) + u_centroid * 0.3);
+        vec3 injc = hsv(hue, ${sat}, inj);
+        ${FB}
+        vec3 prev = texture2D(u_prev, tc + 0.5).rgb * u_decay;
+        vec3 col = ${blend};
         gl_FragColor = vec4(col, 1.0);
       }`;
+      const label = patName + " · " + symName + " · " + fbName + " · " + (blend.startsWith("max") ? "max" : "screen");
+      return { src, label };
     }
 
     // screen pass: tone + vignette
@@ -283,47 +338,26 @@
 
     let scProg, quad, scU = {};
     let texA, texB, fboA, fboB, W = 2, H = 2;
-    const FB_UNIFORMS = ["u_prev", "u_res", "u_time", "u_bass", "u_mid", "u_high", "u_level", "u_onset", "u_centroid", "u_react", "u_decay", "u_hue", "u_flow", "u_seed", "u_sym", "u_p0", "u_p1"];
-    const fbCache = {};        // recipe key -> { prog, U }
+    const FB_UNIFORMS = ["u_prev", "u_res", "u_time", "u_bass", "u_mid", "u_high", "u_level", "u_onset", "u_centroid", "u_react", "u_decay", "u_hue", "u_flow", "u_seed"];
+    const fbCache = {};        // seed -> { prog, U, label }
     let currentFB = null;      // active compiled feedback program
 
-    const RNG = (s) => () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
-    function buildRecipe(rng) {
-      rng = rng || Math.random;
-      const pick = (o) => { const k = Object.keys(o); return k[Math.floor(rng() * k.length)]; };
-      const injNames = Object.keys(INJ).filter((k) => k !== "I_none");
-      const inj1 = injNames[Math.floor(rng() * injNames.length)];
-      const inj2 = rng() < 0.5 ? "I_none" : injNames[Math.floor(rng() * injNames.length)];
-      return {
-        warp: pick(WARP), inj1, inj2, blend: pick(BLEND),
-        sym: 3 + Math.floor(rng() * 9), p0: rng(), p1: rng() * 0.25
-      };
-    }
-    function mutateRecipe(r) {
-      const n = { ...r };
-      const which = Math.floor(Math.random() * 5);
-      const injNames = Object.keys(INJ);
-      const warpNames = Object.keys(WARP);
-      if (which === 0) n.warp = warpNames[Math.floor(Math.random() * warpNames.length)];
-      else if (which === 1) n.inj1 = injNames.filter((k) => k !== "I_none")[Math.floor(Math.random() * (injNames.length - 1))];
-      else if (which === 2) n.inj2 = injNames[Math.floor(Math.random() * injNames.length)];
-      else if (which === 3) n.blend = Object.keys(BLEND)[Math.floor(Math.random() * 2)];
-      else n.sym = 3 + Math.floor(Math.random() * 9);
-      return n;
-    }
-    function recipeKey(r) { return r.warp + "|" + r.inj1 + "|" + r.inj2 + "|" + r.blend; }
+    function buildRecipe() { return { seed: (Math.random() * 4294967296) >>> 0 }; }
+    function mutateRecipe(r) { return { seed: (r.seed ^ ((Math.random() * 65536) | 0 << 3) ^ ((Math.random() * 4294967296) >>> 0)) >>> 0 }; }
     function compileFB(recipe) {
-      const key = recipeKey(recipe);
+      const key = recipe.seed;
       if (!fbCache[key]) {
-        const prog = program(assembleFB(recipe));
+        const g = genGLSL(recipe.seed);
+        const prog = program(g.src);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.warn("gen shader failed, seed", recipe.seed); return null; }
         const U = {};
         FB_UNIFORMS.forEach((k) => U[k] = gl.getUniformLocation(prog, k));
-        fbCache[key] = { prog, U };
+        fbCache[key] = { prog, U, label: g.label };
       }
       return fbCache[key];
     }
     let recipe = null;
-    function setRecipe(r) { recipe = r; currentFB = compileFB(r); updateRecipeLabel(); }
+    function setRecipe(r) { const c = compileFB(r); if (c) { recipe = r; currentFB = c; updateRecipeLabel(); } } // keep old on failure
 
     function makeTarget(w, h) {
       const tex = gl.createTexture();
@@ -345,7 +379,7 @@
       gl.bindBuffer(gl.ARRAY_BUFFER, quad);
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
       ["u_tex", "u_res", "u_onset"].forEach((k) => scU[k] = gl.getUniformLocation(scProg, k));
-      setRecipe(buildRecipe());
+      for (let i = 0; i < 24 && !currentFB; i++) setRecipe(buildRecipe()); // first compile must succeed
     }
 
     function bindQuad(prog) {
@@ -397,8 +431,7 @@
     let lastT = 0;
     function updateRecipeLabel() {
       const el = document.getElementById("recipeLabel");
-      if (el && recipe) el.textContent = "▶ " + recipe.warp.slice(2) + " · " + recipe.inj1.slice(2)
-        + (recipe.inj2 !== "I_none" ? "+" + recipe.inj2.slice(2) : "") + " · " + recipe.blend.slice(2) + " · sym" + recipe.sym;
+      if (el && currentFB) el.textContent = "▶ " + currentFB.label + "  (generated shader)";
     }
     function doEvolve(full) {
       evo.last = lastT; evo.next = 9 + Math.random() * 12;
@@ -459,9 +492,6 @@
       gl.uniform1f(U.u_hue, params.hue);
       gl.uniform1f(U.u_flow, params.flow);
       gl.uniform1f(U.u_seed, params.seed);
-      gl.uniform1f(U.u_sym, recipe.sym);
-      gl.uniform1f(U.u_p0, recipe.p0);
-      gl.uniform1f(U.u_p1, recipe.p1);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
       // screen pass: draw texB to canvas
@@ -513,7 +543,9 @@
 
     window.addEventListener("resize", resize);
     initGL(); resize(); bindUI(); buildMeters();
-    if (new URLSearchParams(location.search).has("go")) hideStart(); // kiosk / preview: skip start screen
+    const qp = new URLSearchParams(location.search);
+    if (qp.has("go")) hideStart();                 // kiosk / preview: skip start screen
+    if (qp.has("seed")) { evo.auto = false; const ab = document.getElementById("auto"); ab.textContent = "Auto"; ab.setAttribute("aria-pressed", "false"); setRecipe({ seed: (Number(qp.get("seed")) >>> 0) }); } // reproduce a specific generated shader
     requestAnimationFrame(frame); // visuals run immediately (idle until a source is chosen)
   </script>
 </body>
