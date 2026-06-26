@@ -14,6 +14,10 @@ window.VJ_WORKS = [
     "label": "Bars"
   },
   {
+    "src": "works/blackhole.html",
+    "label": "Hole"
+  },
+  {
     "src": "works/boids.html",
     "label": "Boids"
   },
@@ -24,6 +28,10 @@ window.VJ_WORKS = [
   {
     "src": "works/bolt.html",
     "label": "Bolt"
+  },
+  {
+    "src": "works/burningship.html",
+    "label": "Burn"
   },
   {
     "src": "works/caustics.html",
@@ -38,8 +46,20 @@ window.VJ_WORKS = [
     "label": "Chrome"
   },
   {
+    "src": "works/clifford.html",
+    "label": "Clifford"
+  },
+  {
+    "src": "works/clouds.html",
+    "label": "Clouds"
+  },
+  {
     "src": "works/contours.html",
     "label": "Contours"
+  },
+  {
+    "src": "works/coral.html",
+    "label": "Coral"
   },
   {
     "src": "works/corridor.html",
@@ -56,6 +76,14 @@ window.VJ_WORKS = [
   {
     "src": "works/fire.html",
     "label": "Fire"
+  },
+  {
+    "src": "works/fireflies.html",
+    "label": "Fireflies"
+  },
+  {
+    "src": "works/fireworks.html",
+    "label": "Fireworks"
   },
   {
     "src": "works/flow.html",
@@ -78,6 +106,10 @@ window.VJ_WORKS = [
     "label": "Hex"
   },
   {
+    "src": "works/ink.html",
+    "label": "Ink"
+  },
+  {
     "src": "works/julia.html",
     "label": "Julia"
   },
@@ -90,12 +122,20 @@ window.VJ_WORKS = [
     "label": "Lava"
   },
   {
+    "src": "works/life.html",
+    "label": "Life"
+  },
+  {
     "src": "works/line-tunnel.html",
     "label": "Line tunnel"
   },
   {
     "src": "works/lissajous.html",
     "label": "Lissajous"
+  },
+  {
+    "src": "works/lorenz.html",
+    "label": "Lorenz"
   },
   {
     "src": "works/mandala.html",
@@ -170,8 +210,20 @@ window.VJ_WORKS = [
     "label": "Seeds"
   },
   {
+    "src": "works/silk.html",
+    "label": "Silk"
+  },
+  {
     "src": "works/smoke.html",
     "label": "Smoke"
+  },
+  {
+    "src": "works/snow.html",
+    "label": "Snow"
+  },
+  {
+    "src": "works/spectrum.html",
+    "label": "Spectrum"
   },
   {
     "src": "works/spiral.html",
@@ -184,6 +236,10 @@ window.VJ_WORKS = [
   {
     "src": "works/strobe.html",
     "label": "Strobe"
+  },
+  {
+    "src": "works/sunset.html",
+    "label": "Sunset"
   },
   {
     "src": "works/sweep-lines.html",
@@ -220,5 +276,9 @@ window.VJ_WORKS = [
   {
     "src": "works/wireframe.html",
     "label": "Wireframe"
+  },
+  {
+    "src": "works/wormhole.html",
+    "label": "Worm"
   }
 ];
