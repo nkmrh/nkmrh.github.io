@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Diptych — Boids</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script id="vj-layer-protocol" type="application/json">
+    {
+      "id": "a",
+      "title": "Layer A",
+      "badge": "Boids",
+      "controls": [
+        { "key": "bpm", "label": "BPM", "type": "range", "min": 40, "max": 220, "step": 1, "default": 120 },
+        { "key": "beat", "label": "Beat", "type": "range", "min": 0, "max": 100, "step": 1, "default": 55 },
+        { "key": "count", "label": "Flock", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
+        { "key": "speed", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 45 },
+        { "key": "spread", "label": "Range", "type": "range", "min": 0, "max": 100, "step": 1, "default": 50 },
+        { "key": "hue", "label": "Hue", "type": "range", "min": 0, "max": 360, "step": 1, "default": 180 }
+      ]
+    }
+  </script>
+
+  <script>
+    const layerProtocol = JSON.parse(document.getElementById("vj-layer-protocol").textContent);
+    const requestedSlot = new URLSearchParams(window.location.search).get("slot");
+    const layerSlot = requestedSlot === "a" || requestedSlot === "b" ? requestedSlot : layerProtocol.id;
+    const runtimeProtocol = { ...layerProtocol, id: layerSlot, title: `Layer ${layerSlot.toUpperCase()}` };
+    function postLayerProtocol() {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "vj-layer-protocol", protocol: runtimeProtocol }, "*");
+      }
+    }
+    postLayerProtocol();
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "request-vj-layer-protocol") postLayerProtocol();
+    });
+
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const protocolDefaults = (protocol) =>
+      (protocol.controls || []).reduce((acc, control) => { acc[control.key] = control.default; return acc; }, {});
+    const state = { ...protocolDefaults(runtimeProtocol) };
+    let dpr = 1;
+    const flock = [];
+
+    function requestStateFromHost() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return;
+      try { host.postMessage({ type: "request-vj-state", role: "work", slot: layerSlot }, "*"); } catch (error) { console.warn(error); }
+    }
+    function readStateFromHostWindow() {
+      const host = window.parent !== window ? window.parent : window.opener;
+      if (!host) return null;
+      try { return host.__vjState || null; } catch (error) { return null; }
+    }
+    function syncStateFromStorage() {
+      if (readStateFromHostWindow()) return;
+      try { const saved = JSON.parse(localStorage.getItem("vj-state") || "null"); if (saved) applyLayer(saved[layerSlot]); } catch (error) { console.warn(error); }
+    }
+    function applyLayer(next) { if (next) Object.assign(state, next); }
+    function resize() {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(window.innerWidth * dpr);
+      canvas.height = Math.floor(window.innerHeight * dpr);
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    function getGlobalTime(now) { return (performance.timeOrigin + now) * 0.001; }
+    function pulse(time) { const phase = (time * state.bpm / 60) % 1; return 1 + Math.pow(1 - phase, 6) * state.beat / 120; }
+    function makeBoid(w, h) { const a = Math.random() * 6.28; return { x: Math.random() * w, y: Math.random() * h, vx: Math.cos(a), vy: Math.sin(a) }; }
+
+    function draw(now) {
+      const t = getGlobalTime(now);
+      const w = window.innerWidth, h = window.innerHeight;
+      const beat = pulse(t);
+      const n = Math.round(30 + state.count * 0.9);
+      const maxSpd = 1 + state.speed / 22;
+      const rad = 28 + state.spread / 100 * 80;
+      const rad2 = rad * rad;
+
+      while (flock.length < n) flock.push(makeBoid(w, h));
+      if (flock.length > n) flock.length = n;
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = "lighter";
+      for (let i = 0; i < flock.length; i++) {
+        const b = flock[i];
+        let ax = 0, ay = 0, cx = 0, cy = 0, sx = 0, sy = 0, cnt = 0;
+        for (let j = 0; j < flock.length; j++) {
+          if (i === j) continue;
+          const o = flock[j];
+          const dx = o.x - b.x, dy = o.y - b.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < rad2 && d2 > 0.01) {
+            ax += o.vx; ay += o.vy; cx += o.x; cy += o.y; sx -= dx / d2; sy -= dy / d2; cnt++;
+          }
+        }
+        if (cnt > 0) {
+          b.vx += (ax / cnt) * 0.05 + (cx / cnt - b.x) * 0.0008 + sx * 9;
+          b.vy += (ay / cnt) * 0.05 + (cy / cnt - b.y) * 0.0008 + sy * 9;
+        }
+        const sp = Math.hypot(b.vx, b.vy) || 1;
+        b.vx = b.vx / sp * maxSpd; b.vy = b.vy / sp * maxSpd;
+        b.x += b.vx; b.y += b.vy;
+        if (b.x < 0) b.x += w; else if (b.x > w) b.x -= w;
+        if (b.y < 0) b.y += h; else if (b.y > h) b.y -= h;
+        const sz = 4 * beat;
+        const hue = (state.hue + i * 2 + t * 14) % 360;
+        ctx.fillStyle = `hsla(${hue}, 85%, 64%, 0.85)`;
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(Math.atan2(b.vy, b.vx));
+        ctx.beginPath();
+        ctx.moveTo(sz * 1.8, 0);
+        ctx.lineTo(-sz, sz * 0.7);
+        ctx.lineTo(-sz, -sz * 0.7);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.globalCompositeOperation = "source-over";
+      requestAnimationFrame(draw);
+    }
+
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "vj-state" && event.data.state) applyLayer(event.data.state[layerSlot]);
+    });
+    window.addEventListener("storage", () => { syncStateFromStorage(); });
+    function syncStateFromHostWindow() { const hostState = readStateFromHostWindow(); if (hostState) applyLayer(hostState[layerSlot]); }
+
+    window.addEventListener("resize", resize);
+    resize();
+    requestAnimationFrame(draw);
+    syncStateFromHostWindow();
+    syncStateFromStorage();
+    requestStateFromHost();
+    window.setInterval(syncStateFromHostWindow, 120);
+    window.setInterval(syncStateFromStorage, 120);
+  </script>
+</body>
+</html>

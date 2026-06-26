@@ -10,6 +10,10 @@ window.VJ_WORKS = [
     "label": "Bars"
   },
   {
+    "src": "works/boids.html",
+    "label": "Boids"
+  },
+  {
     "src": "works/bokeh.html",
     "label": "Bokeh"
   },
@@ -144,6 +148,10 @@ window.VJ_WORKS = [
   {
     "src": "works/wave-grid.html",
     "label": "Wave grid"
+  },
+  {
+    "src": "works/waveform.html",
+    "label": "Waveform"
   },
   {
     "src": "works/wipe.html",
