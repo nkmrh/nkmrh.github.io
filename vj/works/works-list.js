@@ -94,6 +94,10 @@ window.VJ_WORKS = [
     "label": "Noise"
   },
   {
+    "src": "works/oil.html",
+    "label": "Oil"
+  },
+  {
     "src": "works/orbits.html",
     "label": "Orbits"
   },
