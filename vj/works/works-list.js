@@ -2,6 +2,10 @@
 // Regenerate with: node vj/build-works.js
 window.VJ_WORKS = [
   {
+    "src": "works/attractor.html",
+    "label": "Attractor"
+  },
+  {
     "src": "works/aurora.html",
     "label": "Aurora"
   },
@@ -74,8 +78,16 @@ window.VJ_WORKS = [
     "label": "Hex"
   },
   {
+    "src": "works/julia.html",
+    "label": "Julia"
+  },
+  {
     "src": "works/kaleido.html",
     "label": "Kaleido"
+  },
+  {
+    "src": "works/lava.html",
+    "label": "Lava"
   },
   {
     "src": "works/line-tunnel.html",
@@ -88,6 +100,18 @@ window.VJ_WORKS = [
   {
     "src": "works/mandala.html",
     "label": "Mandala"
+  },
+  {
+    "src": "works/marble.html",
+    "label": "Marble"
+  },
+  {
+    "src": "works/matrix.html",
+    "label": "Matrix"
+  },
+  {
+    "src": "works/metaballs.html",
+    "label": "Metaballs"
   },
   {
     "src": "works/moire.html",
@@ -122,6 +146,14 @@ window.VJ_WORKS = [
     "label": "Plasma"
   },
   {
+    "src": "works/plexus.html",
+    "label": "Plexus"
+  },
+  {
+    "src": "works/rain.html",
+    "label": "Rain"
+  },
+  {
     "src": "works/rays.html",
     "label": "Rays"
   },
@@ -136,6 +168,10 @@ window.VJ_WORKS = [
   {
     "src": "works/seeds.html",
     "label": "Seeds"
+  },
+  {
+    "src": "works/smoke.html",
+    "label": "Smoke"
   },
   {
     "src": "works/spiral.html",
@@ -160,6 +196,10 @@ window.VJ_WORKS = [
   {
     "src": "works/voronoi.html",
     "label": "Voronoi"
+  },
+  {
+    "src": "works/vortex.html",
+    "label": "Vortex"
   },
   {
     "src": "works/warp-tunnel.html",
