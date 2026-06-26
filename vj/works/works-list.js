@@ -30,6 +30,10 @@ window.VJ_WORKS = [
     "label": "Checker"
   },
   {
+    "src": "works/chrome.html",
+    "label": "Chrome"
+  },
+  {
     "src": "works/contours.html",
     "label": "Contours"
   },
