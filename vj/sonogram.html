@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Sonogram — live audio visual synth</title>
+  <style>
+    :root { --line: rgba(255,255,255,0.16); --ink: #e8eaf0; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; color: var(--ink);
+      font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, "Hiragino Sans", sans-serif; }
+    canvas { position: fixed; inset: 0; display: block; width: 100vw; height: 100vh; }
+
+    /* start overlay */
+    #start { position: fixed; inset: 0; display: flex; flex-direction: column; gap: 18px;
+      align-items: center; justify-content: center; background: rgba(0,0,0,0.55); backdrop-filter: blur(6px); z-index: 3; }
+    #start h1 { margin: 0; font-size: 28px; letter-spacing: 0.06em; font-weight: 600; }
+    #start p { margin: 0; opacity: 0.7; }
+    .srcs { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+    .btn { min-height: 44px; padding: 0 18px; border: 1px solid var(--line); background: #181b22; color: var(--ink);
+      border-radius: 10px; cursor: pointer; font-size: 14px; }
+    .btn:hover { background: #20242d; }
+    .btn.primary { border-color: rgba(120,200,255,0.5); background: #16303f; }
+
+    /* hud */
+    #hud { position: fixed; left: 12px; bottom: 12px; right: 12px; display: none; gap: 14px; align-items: flex-end;
+      flex-wrap: wrap; z-index: 2; }
+    .panel { background: rgba(12,14,18,0.62); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+      backdrop-filter: blur(8px); }
+    .ctl { display: flex; flex-direction: column; gap: 3px; min-width: 116px; }
+    .ctl label { font-size: 11px; opacity: 0.7; display: flex; justify-content: space-between; }
+    .ctl input[type=range] { width: 100%; accent-color: #6cc6ff; }
+    .row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+    .meters { display: flex; gap: 6px; align-items: flex-end; height: 40px; }
+    .meter { width: 10px; background: #2a2f39; border-radius: 3px 3px 0 0; align-self: flex-end; position: relative; }
+    .meter > i { position: absolute; inset: auto 0 0 0; background: linear-gradient(#6cc6ff, #b98bff); border-radius: 3px 3px 0 0; }
+    .meter > span { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); font-size: 9px; opacity: 0.6; }
+    .mini { min-height: 34px; padding: 0 12px; }
+    .hint { position: fixed; top: 10px; right: 12px; font-size: 11px; opacity: 0.45; z-index: 2; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div id="start">
+    <h1>SONOGRAM</h1>
+    <p>音を入力として、二度と同じものが出ない映像を生成します</p>
+    <div class="srcs">
+      <button class="btn primary" id="srcMic" type="button">🎤 マイク / ライン</button>
+      <button class="btn" id="srcFile" type="button">📁 音声ファイル</button>
+      <button class="btn" id="srcTab" type="button">🖥 タブ / システム音</button>
+    </div>
+    <p style="font-size:11px;opacity:0.5">無音でも生成は動きます · 音源は後から切替可</p>
+    <input id="fileInput" type="file" accept="audio/*" style="display:none" />
+  </div>
+
+  <div class="hint" id="hint"></div>
+
+  <div id="hud">
+    <div class="panel">
+      <div class="row">
+        <div class="ctl"><label>Reactivity <span id="vReact">1.0</span></label><input id="react" type="range" min="0" max="200" value="100" /></div>
+        <div class="ctl"><label>Persistence <span id="vDecay">0.94</span></label><input id="decay" type="range" min="80" max="99" value="94" /></div>
+        <div class="ctl"><label>Hue <span id="vHue">200</span></label><input id="hue" type="range" min="0" max="360" value="200" /></div>
+        <div class="ctl"><label>Flow <span id="vFlow">1.0</span></label><input id="flow" type="range" min="0" max="200" value="100" /></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="meters" id="meters"></div>
+    </div>
+    <div class="panel">
+      <div class="row">
+        <button class="btn mini" id="evolve" type="button">🎲 Evolve</button>
+        <button class="btn mini" id="srcSwap" type="button">音源</button>
+        <button class="btn mini" id="full" type="button">⛶ Fullscreen</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ---------------------------------------------------------------- Audio
+    const Audio = {
+      ctx: null, analyser: null, freq: null, time: null, prevFreq: null,
+      features: { level: 0, bass: 0, mid: 0, high: 0, onset: 0, centroid: 0 },
+      fluxAvg: 0, src: null, mediaEl: null,
+      ensureCtx() {
+        if (!this.ctx) {
+          this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+          this.analyser = this.ctx.createAnalyser();
+          this.analyser.fftSize = 2048;
+          this.analyser.smoothingTimeConstant = 0.7;
+          this.freq = new Uint8Array(this.analyser.frequencyBinCount);
+          this.time = new Uint8Array(this.analyser.fftSize);
+          this.prevFreq = new Float32Array(this.analyser.frequencyBinCount);
+        }
+        if (this.ctx.state === "suspended") this.ctx.resume();
+      },
+      disconnect() {
+        try { if (this.src) this.src.disconnect(); } catch (e) {}
+        if (this.mediaEl) { try { this.mediaEl.pause(); } catch (e) {} this.mediaEl = null; }
+        this.src = null;
+      },
+      async useMic() {
+        this.ensureCtx(); this.disconnect();
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+        this.src = this.ctx.createMediaStreamSource(stream);
+        this.src.connect(this.analyser); // not to destination (avoid howl)
+      },
+      async useTab() {
+        this.ensureCtx(); this.disconnect();
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        if (!stream.getAudioTracks().length) throw new Error("no-audio");
+        this.src = this.ctx.createMediaStreamSource(stream);
+        this.src.connect(this.analyser);
+      },
+      useFile(file) {
+        this.ensureCtx(); this.disconnect();
+        const el = new window.Audio();
+        el.src = URL.createObjectURL(file);
+        el.loop = true; el.crossOrigin = "anonymous";
+        this.mediaEl = el;
+        this.src = this.ctx.createMediaElementSource(el);
+        this.src.connect(this.analyser);
+        this.src.connect(this.ctx.destination); // hear the file
+        el.play();
+      },
+      sample() {
+        const f = this.features;
+        if (!this.src) {
+          // idle mode: gentle synthetic features so the visual breathes before audio
+          const t = performance.now() * 0.001;
+          f.level = 0.32 + 0.18 * Math.sin(t * 0.5);
+          f.bass = 0.3 + 0.3 * Math.pow(Math.max(0, Math.sin(t * 1.6)), 4.0);
+          f.mid = 0.35 + 0.2 * Math.sin(t * 0.37 + 1.0);
+          f.high = 0.25 + 0.2 * Math.sin(t * 0.9 + 2.0);
+          f.centroid = 0.4 + 0.3 * Math.sin(t * 0.21);
+          f.onset = Math.max(f.onset * 0.82, Math.pow(Math.max(0, Math.sin(t * 1.6)), 16.0));
+          return f;
+        }
+        if (!this.analyser) { f.level = f.bass = f.mid = f.high = f.onset = f.centroid = 0; return f; }
+        this.analyser.getByteFrequencyData(this.freq);
+        this.analyser.getByteTimeDomainData(this.time);
+        const N = this.freq.length, sr = this.ctx.sampleRate, ny = sr / 2;
+        // RMS level from time domain
+        let sum = 0;
+        for (let i = 0; i < this.time.length; i++) { const v = (this.time[i] - 128) / 128; sum += v * v; }
+        const level = Math.min(1, Math.sqrt(sum / this.time.length) * 2.2);
+        // band energies + centroid + spectral flux
+        let bass = 0, mid = 0, high = 0, csum = 0, cden = 0, flux = 0;
+        for (let i = 1; i < N; i++) {
+          const hz = i / N * ny, m = this.freq[i] / 255;
+          if (hz < 150) bass += m; else if (hz < 2000) mid += m; else high += m;
+          csum += hz * m; cden += m;
+          const d = m - this.prevFreq[i]; if (d > 0) flux += d;
+          this.prevFreq[i] = m;
+        }
+        const nb = Math.max(1, N);
+        bass = Math.min(1, bass / (150 / ny * nb) * 1.1);
+        mid = Math.min(1, mid / (1850 / ny * nb) * 2.2);
+        high = Math.min(1, high / ((ny - 2000) / ny * nb) * 3.5);
+        const centroid = cden > 0 ? Math.min(1, (csum / cden) / (ny * 0.5)) : 0;
+        // adaptive onset from flux
+        this.fluxAvg = this.fluxAvg * 0.92 + flux * 0.08;
+        const onset = Math.max(0, Math.min(1, (flux - this.fluxAvg * 1.5) * 0.06));
+        // smooth
+        f.level += (level - f.level) * 0.4;
+        f.bass += (bass - f.bass) * 0.5;
+        f.mid += (mid - f.mid) * 0.5;
+        f.high += (high - f.high) * 0.5;
+        f.centroid += (centroid - f.centroid) * 0.2;
+        f.onset = Math.max(onset, f.onset * 0.8); // fast attack, slow release
+        return f;
+      }
+    };
+
+    // ---------------------------------------------------------------- WebGL
+    const canvas = document.getElementById("canvas");
+    const gl = canvas.getContext("webgl", { alpha: false, antialias: false, preserveDrawingBuffer: false });
+    let dpr = 1;
+
+    const VS = "attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }";
+
+    const HELP = `
+      precision highp float;
+      float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+      float noise(vec2 p){
+        vec2 i = floor(p), f = fract(p);
+        float a = hash(i), b = hash(i + vec2(1.0,0.0)), c = hash(i + vec2(0.0,1.0)), d = hash(i + vec2(1.0,1.0));
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+      }
+      float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++){ v += a * noise(p); p = p * 2.04 + 1.7; a *= 0.5; } return v; }
+      vec3 hsv(float h, float s, float v){ vec3 c = clamp(abs(mod(h*6.0 + vec3(0.0,4.0,2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0); return v * mix(vec3(1.0), c, s); }
+      mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+    `;
+
+    // feedback pass: transform previous frame + inject audio-driven structure
+    const FB = HELP + `
+      uniform sampler2D u_prev;
+      uniform vec2 u_res;
+      uniform float u_time, u_bass, u_mid, u_high, u_level, u_onset, u_centroid;
+      uniform float u_react, u_decay, u_hue, u_flow, u_seed;
+      void main(){
+        vec2 uv = gl_FragCoord.xy / u_res;
+        float asp = u_res.x / u_res.y;
+        vec2 c = uv - 0.5; c.x *= asp;
+        // feedback warp: zoom toward centre + rotate, pushed by audio
+        float zoom = 1.0 - (0.006 + u_bass * 0.05 * u_react);
+        float ang = (0.015 + u_mid * 0.12 * u_react) * u_flow;
+        vec2 tc = rot(ang) * c * zoom;
+        tc.x /= asp;
+        vec3 prev = texture2D(u_prev, tc + 0.5).rgb * u_decay;
+        // injection: kaleidoscopic filaments + spokes + travelling onset ripple
+        float r = length(c), a = atan(c.y, c.x);
+        float sym = 3.0 + floor(u_seed * 6.0);
+        float a2 = abs(mod(a, 6.2831 / sym) - 3.1415 / sym);
+        vec2 p = vec2(cos(a2), sin(a2)) * r * (2.5 + u_seed * 4.0);
+        float n = fbm(p + u_time * 0.25 * u_flow + u_seed * 10.0);
+        float fil = smoothstep(0.5, 0.44, abs(fract(n * 4.0) - 0.5));     // bright ridges
+        float spokes = pow(0.5 + 0.5 * sin(a * sym * 2.0 + u_time), 6.0); // radial spokes
+        float inj = fil * (0.35 + u_level * 0.9) + spokes * u_mid * 0.3;
+        float ripple = fract(r * 1.5 - u_time * (0.5 + u_high));
+        inj += u_onset * smoothstep(0.06, 0.0, abs(ripple - 0.5)) * 0.9;  // onset ring expands outward
+        inj = clamp(inj, 0.0, 1.0);
+        float hue = fract(u_hue + u_centroid * 0.35 + n * 0.25 + r * 0.2);
+        vec3 injc = hsv(hue, 0.82, inj);
+        vec3 col = max(prev * u_decay, injc);   // bounded feedback: trails fade, no blowout
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    // screen pass: tone + vignette
+    const SC = `
+      precision highp float;
+      uniform sampler2D u_tex; uniform vec2 u_res; uniform float u_onset;
+      void main(){
+        vec2 uv = gl_FragCoord.xy / u_res;
+        vec3 col = texture2D(u_tex, uv).rgb;
+        col = pow(col, vec3(0.85));
+        float v = smoothstep(1.3, 0.3, length(uv - 0.5));
+        col *= 0.55 + 0.45 * v;             // vignette
+        col += u_onset * 0.04;
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(type, src) {
+      const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(sh));
+      return sh;
+    }
+    function program(fs) {
+      const pr = gl.createProgram();
+      gl.attachShader(pr, compile(gl.VERTEX_SHADER, VS));
+      gl.attachShader(pr, compile(gl.FRAGMENT_SHADER, fs));
+      gl.linkProgram(pr);
+      return pr;
+    }
+
+    let fbProg, scProg, quad, fbU = {}, scU = {};
+    let texA, texB, fboA, fboB, W = 2, H = 2;
+
+    function makeTarget(w, h) {
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      return { tex, fbo };
+    }
+
+    function initGL() {
+      fbProg = program(FB); scProg = program(SC);
+      quad = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      ["u_prev", "u_res", "u_time", "u_bass", "u_mid", "u_high", "u_level", "u_onset", "u_centroid", "u_react", "u_decay", "u_hue", "u_flow", "u_seed"]
+        .forEach((k) => fbU[k] = gl.getUniformLocation(fbProg, k));
+      ["u_tex", "u_res", "u_onset"].forEach((k) => scU[k] = gl.getUniformLocation(scProg, k));
+    }
+
+    function bindQuad(prog) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+      const loc = gl.getAttribLocation(prog, "p");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    }
+
+    function resize() {
+      dpr = Math.min(1.25, window.devicePixelRatio || 1);
+      W = Math.max(2, Math.floor(window.innerWidth * dpr));
+      H = Math.max(2, Math.floor(window.innerHeight * dpr));
+      canvas.width = W; canvas.height = H;
+      canvas.style.width = window.innerWidth + "px";
+      canvas.style.height = window.innerHeight + "px";
+      const a = makeTarget(W, H), b = makeTarget(W, H);
+      texA = a.tex; fboA = a.fbo; texB = b.tex; fboB = b.fbo;
+    }
+
+    // ---------------------------------------------------------------- params
+    const params = { react: 1, decay: 0.94, hue: 200 / 360, flow: 1, seed: Math.random() };
+    function bindUI() {
+      const map = [["react", "vReact", (v) => (params.react = v / 100, (v / 100).toFixed(2))],
+                   ["decay", "vDecay", (v) => (params.decay = v / 100, (v / 100).toFixed(2))],
+                   ["hue", "vHue", (v) => (params.hue = v / 360, String(v))],
+                   ["flow", "vFlow", (v) => (params.flow = v / 100, (v / 100).toFixed(2))]];
+      map.forEach(([id, out, fn]) => {
+        const el = document.getElementById(id), o = document.getElementById(out);
+        const upd = () => { o.textContent = fn(Number(el.value)); };
+        el.addEventListener("input", upd); upd();
+      });
+      document.getElementById("evolve").addEventListener("click", () => { params.seed = Math.random(); });
+      document.getElementById("full").addEventListener("click", () => {
+        if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen();
+      });
+      document.getElementById("srcSwap").addEventListener("click", () => { document.getElementById("start").style.display = "flex"; });
+    }
+
+    // meters
+    let meterBars = [];
+    function buildMeters() {
+      const host = document.getElementById("meters");
+      ["LV", "LO", "MD", "HI", "ON"].forEach((lbl) => {
+        const m = document.createElement("div"); m.className = "meter"; m.style.height = "40px";
+        const i = document.createElement("i"); const s = document.createElement("span"); s.textContent = lbl;
+        m.appendChild(i); m.appendChild(s); host.appendChild(m); meterBars.push(i);
+      });
+    }
+    function updateMeters(f) {
+      const vals = [f.level, f.bass, f.mid, f.high, f.onset];
+      for (let i = 0; i < meterBars.length; i++) meterBars[i].style.height = Math.round(vals[i] * 100) + "%";
+    }
+
+    // ---------------------------------------------------------------- loop
+    let started = performance.now();
+    function frame(now) {
+      const t = (now - started) * 0.001;
+      const f = Audio.sample();
+      updateMeters(f);
+
+      // feedback pass: read prev (texA) -> write texB
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fboB);
+      gl.viewport(0, 0, W, H);
+      gl.useProgram(fbProg);
+      bindQuad(fbProg);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
+      gl.uniform1i(fbU.u_prev, 0);
+      gl.uniform2f(fbU.u_res, W, H);
+      gl.uniform1f(fbU.u_time, t);
+      gl.uniform1f(fbU.u_bass, f.bass);
+      gl.uniform1f(fbU.u_mid, f.mid);
+      gl.uniform1f(fbU.u_high, f.high);
+      gl.uniform1f(fbU.u_level, f.level);
+      gl.uniform1f(fbU.u_onset, f.onset);
+      gl.uniform1f(fbU.u_centroid, f.centroid);
+      gl.uniform1f(fbU.u_react, params.react);
+      gl.uniform1f(fbU.u_decay, params.decay);
+      gl.uniform1f(fbU.u_hue, params.hue);
+      gl.uniform1f(fbU.u_flow, params.flow);
+      gl.uniform1f(fbU.u_seed, params.seed);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      // screen pass: draw texB to canvas
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, W, H);
+      gl.useProgram(scProg);
+      bindQuad(scProg);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texB);
+      gl.uniform1i(scU.u_tex, 0);
+      gl.uniform2f(scU.u_res, W, H);
+      gl.uniform1f(scU.u_onset, f.onset);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      // swap history
+      let tt = texA; texA = texB; texB = tt;
+      let ff = fboA; fboA = fboB; fboB = ff;
+
+      requestAnimationFrame(frame);
+    }
+
+    // ---------------------------------------------------------------- wire up
+    const startEl = document.getElementById("start");
+    const hintEl = document.getElementById("hint");
+    function hideStart() { startEl.style.display = "none"; document.getElementById("hud").style.display = "flex"; }
+    function showHint(msg) { hintEl.textContent = msg; if (msg) setTimeout(() => { if (hintEl.textContent === msg) hintEl.textContent = ""; }, 4000); }
+
+    document.getElementById("srcMic").addEventListener("click", async () => {
+      try { await Audio.useMic(); hideStart(); showHint("🎤 マイク入力中"); }
+      catch (e) { showHint("マイクを取得できませんでした: " + e.message); }
+    });
+    document.getElementById("srcTab").addEventListener("click", async () => {
+      try { await Audio.useTab(); hideStart(); showHint("🖥 タブ音入力中(共有を継続してください)"); }
+      catch (e) { showHint("タブ音を取得できませんでした(Chrome推奨/共有時に音声を有効化): " + e.message); }
+    });
+    document.getElementById("srcFile").addEventListener("click", () => document.getElementById("fileInput").click());
+    document.getElementById("fileInput").addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      try { Audio.useFile(file); hideStart(); showHint("📁 " + file.name); }
+      catch (err) { showHint("再生できませんでした: " + err.message); }
+    });
+    // drag & drop a file anywhere
+    window.addEventListener("dragover", (e) => e.preventDefault());
+    window.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file && file.type.startsWith("audio")) { try { Audio.useFile(file); hideStart(); showHint("📁 " + file.name); } catch (err) {} }
+    });
+
+    window.addEventListener("resize", resize);
+    initGL(); resize(); bindUI(); buildMeters();
+    if (new URLSearchParams(location.search).has("go")) hideStart(); // kiosk / preview: skip start screen
+    requestAnimationFrame(frame); // visuals run immediately (idle until a source is chosen)
+  </script>
+</body>
+</html>
