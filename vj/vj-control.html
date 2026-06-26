@@ -97,6 +97,21 @@
       transform: translateY(1px);
     }
 
+    .button.mini {
+      min-height: 30px;
+      padding: 0 10px;
+      font-size: 12px;
+      border-radius: 7px;
+    }
+
+    .works-head-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
     .grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -738,7 +753,11 @@
       <section class="library panel" aria-label="Works">
         <div class="panel-head">
           <h2>Works</h2>
-          <span class="badge">Tap A / B to load · tap the lit one again to clear</span>
+          <div class="works-head-right">
+            <span class="badge">Tap A / B to load · tap the lit one again to clear</span>
+            <button class="button mini" id="shuffleWorks" type="button">🎲 Shuffle</button>
+            <button class="button mini" id="randomPlay" type="button" aria-pressed="false">Auto ▶</button>
+          </div>
         </div>
         <div class="work-grid" id="workLibrary"></div>
       </section>
@@ -1616,6 +1635,7 @@
     });
 
     document.getElementById("reset").addEventListener("click", async () => {
+      setRandomPlay(false);
       Object.assign(state, buildDefaultState(layerProtocols), { sources: { ...BASE_STATE.sources } });
       updateReadouts();
       send();
@@ -1623,6 +1643,57 @@
       await reloadSlotProtocol("a", state.sources.a);
       await reloadSlotProtocol("b", state.sources.b);
     });
+
+    // --- Random play ------------------------------------------------------
+    // Shuffle drops two distinct random works into A and B. Auto re-shuffles
+    // every RANDOM_PLAY_BARS bars (timed off the Auto Mix BPM) for hands-off VJ.
+    const RANDOM_PLAY_BARS = 8;
+    const shuffleButton = document.getElementById("shuffleWorks");
+    const randomPlayButton = document.getElementById("randomPlay");
+    let randomPlay = false;
+    let nextShuffleAt = 0;
+
+    function randomWorkSrc(exclude) {
+      const pool = WORK_OPTIONS.filter((work) => work.src !== exclude);
+      const list = pool.length ? pool : WORK_OPTIONS;
+      return list[Math.floor(Math.random() * list.length)].src;
+    }
+
+    async function shuffleWorks() {
+      const a = randomWorkSrc(null);
+      const b = randomWorkSrc(a);
+      state.sources.a = a;
+      state.sources.b = b;
+      updateLibrary();
+      send();
+      try {
+        await reloadSlotProtocol("a", a);
+        await reloadSlotProtocol("b", b);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function setRandomPlay(on) {
+      randomPlay = on;
+      randomPlayButton.classList.toggle("active", on);
+      randomPlayButton.setAttribute("aria-pressed", String(on));
+      randomPlayButton.textContent = on ? "Auto ⏸" : "Auto ▶";
+      if (on) nextShuffleAt = 0; // fire on the next tick
+    }
+
+    function tickRandomPlay() {
+      if (!randomPlay) return;
+      const now = performance.now();
+      if (now < nextShuffleAt) return;
+      shuffleWorks();
+      const bpm = Math.max(1, getAutoMixBpm());
+      nextShuffleAt = now + RANDOM_PLAY_BARS * 4 * (60000 / bpm);
+    }
+
+    shuffleButton.addEventListener("click", () => { shuffleWorks(); });
+    randomPlayButton.addEventListener("click", () => { setRandomPlay(!randomPlay); });
+    window.setInterval(tickRandomPlay, 250);
 
     window.addEventListener("message", (event) => {
       if (!event.data) return;
