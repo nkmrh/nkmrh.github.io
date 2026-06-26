@@ -22,6 +22,10 @@ window.VJ_WORKS = [
     "label": "Bolt"
   },
   {
+    "src": "works/caustics.html",
+    "label": "Caustics"
+  },
+  {
     "src": "works/checker.html",
     "label": "Checker"
   },
