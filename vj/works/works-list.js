@@ -22,6 +22,10 @@ window.VJ_WORKS = [
     "label": "Contours"
   },
   {
+    "src": "works/corridor.html",
+    "label": "Corridor"
+  },
+  {
     "src": "works/drift.html",
     "label": "Drift"
   },
