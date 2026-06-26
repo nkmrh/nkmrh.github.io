@@ -10,6 +10,10 @@ window.VJ_WORKS = [
     "label": "Bars"
   },
   {
+    "src": "works/bokeh.html",
+    "label": "Bokeh"
+  },
+  {
     "src": "works/bolt.html",
     "label": "Bolt"
   },
