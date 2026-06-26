@@ -30,6 +30,14 @@ window.VJ_WORKS = [
     "label": "Bolt"
   },
   {
+    "src": "works/borealis.html",
+    "label": "Borealis"
+  },
+  {
+    "src": "works/bubbles.html",
+    "label": "Bubbles"
+  },
+  {
     "src": "works/burningship.html",
     "label": "Burn"
   },
@@ -54,6 +62,10 @@ window.VJ_WORKS = [
     "label": "Clouds"
   },
   {
+    "src": "works/comets.html",
+    "label": "Comets"
+  },
+  {
     "src": "works/contours.html",
     "label": "Contours"
   },
@@ -66,8 +78,16 @@ window.VJ_WORKS = [
     "label": "Corridor"
   },
   {
+    "src": "works/crystal.html",
+    "label": "Crystal"
+  },
+  {
     "src": "works/drift.html",
     "label": "Drift"
+  },
+  {
+    "src": "works/dunes.html",
+    "label": "Dunes"
   },
   {
     "src": "works/electric.html",
@@ -118,6 +138,10 @@ window.VJ_WORKS = [
     "label": "Hex"
   },
   {
+    "src": "works/hyperspace.html",
+    "label": "Hyper"
+  },
+  {
     "src": "works/ink.html",
     "label": "Ink"
   },
@@ -132,6 +156,10 @@ window.VJ_WORKS = [
   {
     "src": "works/kaleido.html",
     "label": "Kaleido"
+  },
+  {
+    "src": "works/lattice.html",
+    "label": "Lattice"
   },
   {
     "src": "works/lava.html",
@@ -206,12 +234,24 @@ window.VJ_WORKS = [
     "label": "Oil"
   },
   {
+    "src": "works/opart.html",
+    "label": "Op-Art"
+  },
+  {
     "src": "works/orbits.html",
     "label": "Orbits"
   },
   {
+    "src": "works/orbs.html",
+    "label": "Orbs"
+  },
+  {
     "src": "works/pendulum.html",
     "label": "Pendulum"
+  },
+  {
+    "src": "works/petals.html",
+    "label": "Petals"
   },
   {
     "src": "works/plasma-bloom.html",
@@ -246,6 +286,10 @@ window.VJ_WORKS = [
     "label": "Rose"
   },
   {
+    "src": "works/rosette.html",
+    "label": "Rosette"
+  },
+  {
     "src": "works/seeds.html",
     "label": "Seeds"
   },
@@ -264,6 +308,10 @@ window.VJ_WORKS = [
   {
     "src": "works/spectrum.html",
     "label": "Spectrum"
+  },
+  {
+    "src": "works/spinner.html",
+    "label": "Spinner"
   },
   {
     "src": "works/spiral.html",
@@ -310,6 +358,10 @@ window.VJ_WORKS = [
     "label": "Truchet"
   },
   {
+    "src": "works/typegrid.html",
+    "label": "Typegrid"
+  },
+  {
     "src": "works/voronoi.html",
     "label": "Voronoi"
   },
@@ -320,6 +372,10 @@ window.VJ_WORKS = [
   {
     "src": "works/warp-tunnel.html",
     "label": "Tunnel"
+  },
+  {
+    "src": "works/water.html",
+    "label": "Water"
   },
   {
     "src": "works/wave-grid.html",
@@ -340,5 +396,9 @@ window.VJ_WORKS = [
   {
     "src": "works/wormhole.html",
     "label": "Worm"
+  },
+  {
+    "src": "works/worms.html",
+    "label": "Worms"
   }
 ];
