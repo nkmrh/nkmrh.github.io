@@ -70,6 +70,10 @@ window.VJ_WORKS = [
     "label": "Drift"
   },
   {
+    "src": "works/electric.html",
+    "label": "Electric"
+  },
+  {
     "src": "works/feedback.html",
     "label": "Feedback"
   },
@@ -94,8 +98,16 @@ window.VJ_WORKS = [
     "label": "Gyro"
   },
   {
+    "src": "works/gyroid.html",
+    "label": "Gyroid"
+  },
+  {
     "src": "works/halftone.html",
     "label": "Halftone"
+  },
+  {
+    "src": "works/harmonograph.html",
+    "label": "Harmono"
   },
   {
     "src": "works/helix.html",
@@ -108,6 +120,10 @@ window.VJ_WORKS = [
   {
     "src": "works/ink.html",
     "label": "Ink"
+  },
+  {
+    "src": "works/interference.html",
+    "label": "Interfere"
   },
   {
     "src": "works/julia.html",
@@ -142,6 +158,10 @@ window.VJ_WORKS = [
     "label": "Mandala"
   },
   {
+    "src": "works/mandelbrot.html",
+    "label": "Mandel"
+  },
+  {
     "src": "works/marble.html",
     "label": "Marble"
   },
@@ -150,8 +170,16 @@ window.VJ_WORKS = [
     "label": "Matrix"
   },
   {
+    "src": "works/maze.html",
+    "label": "Maze"
+  },
+  {
     "src": "works/metaballs.html",
     "label": "Metaballs"
+  },
+  {
+    "src": "works/mirror.html",
+    "label": "Mirror"
   },
   {
     "src": "works/moire.html",
@@ -166,6 +194,10 @@ window.VJ_WORKS = [
     "label": "Nebula"
   },
   {
+    "src": "works/newton.html",
+    "label": "Newton"
+  },
+  {
     "src": "works/noise.html",
     "label": "Noise"
   },
@@ -176,6 +208,10 @@ window.VJ_WORKS = [
   {
     "src": "works/orbits.html",
     "label": "Orbits"
+  },
+  {
+    "src": "works/pendulum.html",
+    "label": "Pendulum"
   },
   {
     "src": "works/plasma-bloom.html",
@@ -206,6 +242,10 @@ window.VJ_WORKS = [
     "label": "Ripples"
   },
   {
+    "src": "works/rose.html",
+    "label": "Rose"
+  },
+  {
     "src": "works/seeds.html",
     "label": "Seeds"
   },
@@ -230,8 +270,20 @@ window.VJ_WORKS = [
     "label": "Spiral"
   },
   {
+    "src": "works/spirograph.html",
+    "label": "Spiro"
+  },
+  {
+    "src": "works/starburst.html",
+    "label": "Starburst"
+  },
+  {
     "src": "works/starfield.html",
     "label": "Starfield"
+  },
+  {
+    "src": "works/starnest.html",
+    "label": "Stars"
   },
   {
     "src": "works/strobe.html",
@@ -244,6 +296,14 @@ window.VJ_WORKS = [
   {
     "src": "works/sweep-lines.html",
     "label": "Sweep"
+  },
+  {
+    "src": "works/thermal.html",
+    "label": "Thermal"
+  },
+  {
+    "src": "works/tiedye.html",
+    "label": "Tie-Dye"
   },
   {
     "src": "works/truchet.html",
