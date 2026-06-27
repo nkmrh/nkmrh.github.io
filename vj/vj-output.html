@@ -175,7 +175,10 @@
       // Only apply the brightness filter when it actually changes something.
       // filter:brightness(1) still forces the whole stage into an offscreen
       // buffer, which makes the animated mix-blend layers flicker on iOS Safari.
-      stage.style.filter = master === 1 ? "none" : `brightness(${master})`;
+      const fx = [];
+      if (state.mono) fx.push("grayscale(1)");
+      if (master !== 1) fx.push(`brightness(${master})`);
+      stage.style.filter = fx.length ? fx.join(" ") : "none";
       blackout.classList.toggle("active", Boolean(state.blackout));
       if (state.sources) {
         applyLayerSource(layerA, "a", state.sources.a);

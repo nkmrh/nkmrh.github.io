@@ -387,6 +387,12 @@
       background: #000;
     }
 
+    /* Mono mode: desaturate the whole instrument (previews + library) */
+    body.mono .preview-frame,
+    body.mono .layer-prev-frame iframe,
+    body.mono .work-thumb img { filter: grayscale(1); }
+    .button.active { border-color: rgba(101, 214, 173, 0.55); background: #1d352f; }
+
     .work-card-foot {
       display: flex;
       align-items: center;
@@ -609,6 +615,7 @@
       </div>
       <div class="actions">
         <button class="button primary" id="openOutput" type="button">Open Output</button>
+        <button class="button" id="mono" type="button">Mono</button>
         <button class="button" id="blackout" type="button">Blackout</button>
         <button class="button" id="reset" type="button">Reset</button>
       </div>
@@ -775,6 +782,7 @@
       levelA: 100,
       levelB: 100,
       blackout: false,
+      mono: false,
       sources: {
         a: "works/plasma-bloom.html",
         b: "works/line-tunnel.html"
@@ -1319,7 +1327,11 @@
       stage.style.setProperty("--opacity-a", (1 - mix) * levelA);
       stage.style.setProperty("--opacity-b", mix * levelB);
       stage.style.setProperty("--blend", state.blendMode || "screen");
-      stage.style.filter = master === 1 ? "none" : "brightness(" + master + ")";
+      const fx = [];
+      if (state.mono) fx.push("grayscale(1)");
+      if (master !== 1) fx.push("brightness(" + master + ")");
+      stage.style.filter = fx.length ? fx.join(" ") : "none";
+      document.body.classList.toggle("mono", Boolean(state.mono));
       blackout.classList.toggle("active", Boolean(state.blackout));
       if (state.sources) {
         applyLayerSource(layerA, "a", state.sources.a);
@@ -1510,6 +1522,9 @@
         });
       });
       document.getElementById("blackout").textContent = state.blackout ? "Lights On" : "Blackout";
+      const monoBtn = document.getElementById("mono");
+      monoBtn.classList.toggle("active", Boolean(state.mono));
+      monoBtn.textContent = state.mono ? "Mono ✓" : "Mono";
       autoMixToggle.classList.toggle("active", state.autoMix.enabled);
       autoMixToggle.setAttribute("aria-pressed", String(state.autoMix.enabled));
       sharedBpmToggle.classList.toggle("active", state.sharedBpm.enabled);
@@ -1624,6 +1639,13 @@
 
     document.getElementById("blackout").addEventListener("click", () => {
       state.blackout = !state.blackout;
+      updateReadouts();
+      send();
+    });
+
+    document.getElementById("mono").addEventListener("click", () => {
+      state.mono = !state.mono;
+      applyState(state);
       updateReadouts();
       send();
     });
