@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Diptych — Sonogram</title>
+  <style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}canvas{display:block;width:100vw;height:100vh}</style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script id="vj-layer-protocol" type="application/json">
+  {"id":"a","title":"Layer A","badge":"Sonogram","controls":[
+    {"key":"style","label":"Style","type":"range","min":0,"max":100,"step":1,"default":30},
+    {"key":"react","label":"React","type":"range","min":0,"max":100,"step":1,"default":100},
+    {"key":"decay","label":"Persistence","type":"range","min":0,"max":100,"step":1,"default":70},
+    {"key":"audio","label":"Audio","type":"range","min":0,"max":100,"step":1,"default":80},
+    {"key":"hue","label":"Hue","type":"range","min":0,"max":360,"step":1,"default":200}
+  ]}
+  </script>
+  <script>
+    var layerProtocol = JSON.parse(document.getElementById("vj-layer-protocol").textContent);
+    var requestedSlot = new URLSearchParams(window.location.search).get("slot");
+    var layerSlot = requestedSlot==="a"||requestedSlot==="b"?requestedSlot:layerProtocol.id;
+    var runtimeProtocol = Object.assign({}, layerProtocol, {id:layerSlot, title:"Layer "+layerSlot.toUpperCase()});
+    function postLayerProtocol(){ if(window.parent&&window.parent!==window) window.parent.postMessage({type:"vj-layer-protocol",protocol:runtimeProtocol},"*"); }
+    postLayerProtocol();
+    var state = (layerProtocol.controls||[]).reduce(function(o,c){o[c.key]=c.default;return o;},{});
+    function applyLayer(n){ if(n) Object.assign(state,n); }
+    function readHost(){ var h=window.parent!==window?window.parent:window.opener; if(!h)return null; try{return h.__vjState||null;}catch(e){return null;} }
+    function hostAudio(){ try{ var s=window.parent!==window?window.parent:window.opener; return s&&s.__vjState&&s.__vjState.audio?s.__vjState.audio:null; }catch(e){return null;} }
+    var lastAudio=null,lastAudioT=0;
+    function liveAudio(){ return (performance.now()-lastAudioT<300)?lastAudio:hostAudio(); }
+    window.addEventListener("message",function(e){ if(!e.data)return;
+      if(e.data.type==="request-vj-layer-protocol") postLayerProtocol();
+      if(e.data.type==="vj-state"&&e.data.state) applyLayer(e.data.state[layerSlot]);
+      if(e.data.type==="vj-audio"&&e.data.a){ lastAudio=e.data.a; lastAudioT=performance.now(); } });
+    window.addEventListener("storage",function(){ if(!readHost()){ try{var sv=JSON.parse(localStorage.getItem("vj-state")||"null"); if(sv)applyLayer(sv[layerSlot]);}catch(e){} } });
+    function syncHost(){ var h=readHost(); if(h)applyLayer(h[layerSlot]); }
+    var canvas=document.getElementById("canvas");
+    var gl=canvas.getContext("webgl",{antialias:false,premultipliedAlpha:false});
+    var dpr=1;
+    function updateRecipeLabel(){}
+    const VS = "attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }";
+
+    const HELP = `
+      precision highp float;
+      float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+      float noise(vec2 p){
+        vec2 i = floor(p), f = fract(p);
+        float a = hash(i), b = hash(i + vec2(1.0,0.0)), c = hash(i + vec2(0.0,1.0)), d = hash(i + vec2(1.0,1.0));
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+      }
+      float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++){ v += a * noise(p); p = p * 2.04 + 1.7; a *= 0.5; } return v; }
+      float vor(vec2 x){ vec2 g = floor(x), f = fract(x); float md = 8.0; for (int j=-1;j<=1;j++) for (int i=-1;i<=1;i++){ vec2 o=vec2(float(i),float(j)); vec2 rr=o+vec2(hash(g+o),hash(g+o+3.1))-f; md=min(md,dot(rr,rr)); } return sqrt(md); }
+      vec3 hsv(float h, float s, float v){ vec3 c = clamp(abs(mod(h*6.0 + vec3(0.0,4.0,2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0); return v * mix(vec3(1.0), c, s); }
+      mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+    `;
+
+    // ---- M3b: on-the-fly GLSL synthesis. Instead of recombining hand-written
+    // modules, we GENERATE the warp + field expressions from a typed grammar
+    // (scalar S / vec2 V). Typing guarantees the GLSL always compiles; the space
+    // of producible structures is effectively infinite. Each seed = a unique shader.
+    const FB_HEAD = HELP + `
+      uniform sampler2D u_prev;
+      uniform vec2 u_res;
+      uniform float u_time, u_bass, u_mid, u_high, u_level, u_onset, u_centroid;
+      uniform float u_react, u_decay, u_hue, u_flow, u_seed;
+    `;
+    function mulberry32(seed) {
+      let s = seed >>> 0;
+      return function () { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    }
+    // Generate a full feedback fragment shader from a seed. Five independent
+    // dimensions are generated and combined — symmetry, domain warp, a small
+    // scalar "DNA" field, a PATTERN operator (the shape language), a feedback
+    // transform and a palette — so the output spans many topologies (grids,
+    // cells, stripes, rings, tunnels, tiles…), not just mandala/marble.
+    function genGLSL(seed) {
+      const R = mulberry32(seed);
+      const ri = (n) => Math.floor(R() * n);
+      const cf = (lo, hi) => (lo + R() * (hi - lo)).toFixed(3);
+      // small generated scalar field (per-seed "DNA" that perturbs the pattern)
+      const termS = () => ["r", "a", "(u_time*" + cf(0.05, 0.3) + ")", "u_bass", "u_mid", "u_high", "u_level", "u_centroid", cf(-1.5, 1.5)][ri(9)];
+      const termV = () => ["c", "q", "vec2(" + cf(-1, 1) + "," + cf(-1, 1) + ")"][ri(3)];
+      function genV(d) { if (d <= 0 || R() < 0.5) return termV(); const k = ri(3);
+        if (k === 0) return "vec2(" + genS(d - 1) + "," + genS(d - 1) + ")";
+        if (k === 1) return "(rot(" + genS(d - 1) + ")*" + termV() + ")";
+        return "(" + genV(d - 1) + "+" + genV(d - 1) + ")"; }
+      function genS(d) { if (d <= 0 || R() < 0.5) return termS(); const k = ri(6);
+        if (k === 0) return "sin(" + genS(d - 1) + "*" + cf(0.8, 4.0) + ")";
+        if (k === 1) return "cos(" + genS(d - 1) + "*" + cf(0.8, 4.0) + ")";
+        if (k === 2) return "fbm(" + genV(d - 1) + ")";
+        if (k === 3) return "(" + genS(d - 1) + "*" + genS(d - 1) + ")";
+        if (k === 4) return "abs(" + genS(d - 1) + ")";
+        return "length(" + genV(d - 1) + ")"; }
+
+      // 1) symmetry applied to the working coord c
+      const symN = 3 + ri(8), symKind = ri(6);
+      const SYM = ["",
+        "c.x = abs(c.x);",
+        "c = abs(c);",
+        "{ float an = atan(c.y, c.x), rr = length(c); an = abs(mod(an, 6.2831/" + symN + ".0) - 3.1415/" + symN + ".0); c = vec2(cos(an), sin(an)) * rr; }",
+        "{ float an = atan(c.y, c.x), rr = length(c); an = mod(an, 6.2831/" + symN + ".0); c = vec2(cos(an), sin(an)) * rr; }",
+        "c = abs(fract(c * " + cf(0.8, 1.8) + ") - 0.5);"][symKind];
+      const symName = ["free", "mirror", "quad", "kaleido" + symN, "wedge" + symN, "tile"][symKind];
+
+      // 2) domain warp -> q (the coordinate the pattern reads)
+      const q = "(rot(" + cf(-0.6, 0.6) + ") * c * " + cf(1.0, 4.0) + " + " + cf(0.0, 0.45) + " * vec2(fbm(c*" + cf(1, 3) + "+u_time*0.05*u_flow), fbm(c*" + cf(1, 3) + "+5.0)))";
+
+      // 3) the DNA field
+      const gd = genS(3);
+
+      // 4) PATTERN operator (shape language) reading q + gd -> intensity ~[0,1]
+      const F = cf(2, 10), N = cf(2, 6), dir = "vec2(" + cf(-1, 1) + "," + cf(-1, 1) + ")";
+      const pat = ri(8);
+      const PAT = [
+        "0.5 + 0.5*sin(dot(q," + dir + ")*" + F + " + gd*" + cf(1, 4) + " + u_time*0.3*u_flow)",        // stripes
+        "0.5 + 0.5*sin(length(q)*" + F + " - u_time*(0.4+u_high)*u_flow + gd)",                          // rings
+        "smoothstep(0.5, 0.45, max(abs(fract(q+gd*0.15)-0.5).x, abs(fract(q)-0.5).y))",                  // grid
+        "(1.0 - smoothstep(0.0, " + cf(0.3, 0.6) + ", vor(q + gd*0.1)))",                                // cells
+        "smoothstep(0.5, 0.42, abs(fract(fbm(q)*" + N + ")-0.5))",                                       // marble
+        "smoothstep(" + cf(0.22, 0.42) + ", 0.0, length(fract(q)-0.5))",                                 // dots
+        "step(0.0, sin(q.x*" + F + "+gd) * sin(q.y*" + F + "))",                                         // checker
+        "0.5 + 0.5*sin(atan(q.y,q.x)*" + symN + ".0 + length(q)*" + F + " + u_time*u_flow)"              // spokes
+      ][pat];
+      const patName = ["stripes", "rings", "grid", "cells", "marble", "dots", "checker", "spokes"][pat];
+      const G = cf(1.0, 3.5);
+
+      // 5) feedback transform family (uses original coord cc)
+      const fbk = ri(6), za = cf(0.003, 0.018);
+      const FB = [
+        "vec2 tc = rot((0.01 + u_mid*0.1*u_react)*u_flow) * cc * (1.0 - (" + za + " + u_bass*0.05*u_react)); tc.x /= asp;",
+        "vec2 tc = rot(0.01*u_flow) * cc * (1.0 + (" + za + " + u_bass*0.03*u_react)); tc.x /= asp;",
+        "vec2 tc = rot((0.03 + u_mid*0.2*u_react)*u_flow) * cc * (1.0 - " + za + "); tc.x /= asp;",
+        "vec2 tc = cc*(1.0 - " + za + ") + vec2(" + cf(-0.012, 0.012) + ", " + cf(-0.012, 0.012) + ")*u_flow; tc.x /= asp;",
+        "vec2 tc; { float rr = length(cc)*(1.0-(" + za + "+u_bass*0.04*u_react)), an = atan(cc.y,cc.x)+(0.02+u_mid*0.1*u_react)*u_flow; tc = vec2(cos(an),sin(an))*rr; tc.x /= asp; }",
+        "vec2 tc = mat2(1.0, " + cf(-0.12, 0.12) + ", 0.0, 1.0) * cc * (1.0 - (" + za + "+u_bass*0.03)); tc.x /= asp;"][fbk];
+      const fbName = ["tunnel", "zoomout", "rotate", "scroll", "polar", "shear"][fbk];
+
+      // 6) palette
+      const HUE = ["length(q)*0.12", "atan(c.y,c.x)/6.2831", "gd*0.3", "r*0.25", "v*0.4"][ri(5)];
+      const sat = cf(0.55, 0.95);
+      const blend = R() < 0.5 ? "max(prev, injc)" : "(1.0 - (1.0 - prev) * (1.0 - injc))";
+
+      const src = FB_HEAD + `
+      void main(){
+        vec2 uv = gl_FragCoord.xy / u_res; float asp = u_res.x / u_res.y;
+        vec2 cc = uv - 0.5; cc.x *= asp;
+        vec2 c = cc;
+        ${SYM}
+        float r = length(c), a = atan(c.y, c.x);
+        vec2 q = ${q};
+        float gd = ${gd};
+        float v = pow(clamp(${PAT}, 0.0, 1.0), ${G});
+        float inj = v * (0.3 + u_level * 0.85);
+        inj += u_onset * smoothstep(0.07, 0.0, abs(fract(r*2.0 - u_time*0.5*u_flow) - 0.5)) * 0.5;
+        inj = clamp(inj, 0.0, 1.0);
+        float hue = fract(u_hue + (${HUE}) + u_centroid * 0.3);
+        vec3 injc = hsv(hue, ${sat}, inj);
+        ${FB}
+        vec3 prev = texture2D(u_prev, tc + 0.5).rgb * u_decay;
+        vec3 col = ${blend};
+        gl_FragColor = vec4(col, 1.0);
+      }`;
+      const label = patName + " · " + symName + " · " + fbName + " · " + (blend.startsWith("max") ? "max" : "screen");
+      return { src, label };
+    }
+
+    // screen pass: tone + vignette
+    const SC = `
+      precision highp float;
+      uniform sampler2D u_tex; uniform vec2 u_res; uniform float u_onset;
+      void main(){
+        vec2 uv = gl_FragCoord.xy / u_res;
+        vec3 col = texture2D(u_tex, uv).rgb;
+        col = pow(col, vec3(0.85));
+        float v = smoothstep(1.3, 0.3, length(uv - 0.5));
+        col *= 0.55 + 0.45 * v;             // vignette
+        col += u_onset * 0.04;
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function compile(type, src) {
+      const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(sh));
+      return sh;
+    }
+    function program(fs) {
+      const pr = gl.createProgram();
+      gl.attachShader(pr, compile(gl.VERTEX_SHADER, VS));
+      gl.attachShader(pr, compile(gl.FRAGMENT_SHADER, fs));
+      gl.linkProgram(pr);
+      return pr;
+    }
+
+    let scProg, quad, scU = {};
+    let texA, texB, fboA, fboB, W = 2, H = 2;
+    const FB_UNIFORMS = ["u_prev", "u_res", "u_time", "u_bass", "u_mid", "u_high", "u_level", "u_onset", "u_centroid", "u_react", "u_decay", "u_hue", "u_flow", "u_seed"];
+    const fbCache = {};        // seed -> { prog, U, label }
+    let currentFB = null;      // active compiled feedback program
+
+    function buildRecipe() { return { seed: (Math.random() * 4294967296) >>> 0 }; }
+    function mutateRecipe(r) { return { seed: (r.seed ^ ((Math.random() * 65536) | 0 << 3) ^ ((Math.random() * 4294967296) >>> 0)) >>> 0 }; }
+    function compileFB(recipe) {
+      const key = recipe.seed;
+      if (!fbCache[key]) {
+        const g = genGLSL(recipe.seed);
+        const prog = program(g.src);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.warn("gen shader failed, seed", recipe.seed); return null; }
+        const U = {};
+        FB_UNIFORMS.forEach((k) => U[k] = gl.getUniformLocation(prog, k));
+        fbCache[key] = { prog, U, label: g.label };
+      }
+      return fbCache[key];
+    }
+    let recipe = null;
+    function setRecipe(r) { const c = compileFB(r); if (c) { recipe = r; currentFB = c; updateRecipeLabel(); } } // keep old on failure
+
+    function makeTarget(w, h) {
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      return { tex, fbo };
+    }
+
+    function initGL() {
+      scProg = program(SC);
+      quad = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      ["u_tex", "u_res", "u_onset"].forEach((k) => scU[k] = gl.getUniformLocation(scProg, k));
+      for (let i = 0; i < 24 && !currentFB; i++) setRecipe(buildRecipe()); // first compile must succeed
+    }
+
+    function bindQuad(prog) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+      const loc = gl.getAttribLocation(prog, "p");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    }
+
+
+    function resize(){ dpr=Math.min(1.0,window.devicePixelRatio||1); W=Math.max(2,Math.floor(window.innerWidth*dpr)); H=Math.max(2,Math.floor(window.innerHeight*dpr));
+      canvas.width=W;canvas.height=H; canvas.style.width=window.innerWidth+"px"; canvas.style.height=window.innerHeight+"px";
+      var pa=makeTarget(W,H),pb=makeTarget(W,H); texA=pa.tex;fboA=pa.fbo;texB=pb.tex;fboB=pb.fbo; }
+    var lastBucket=-1;
+    function frame(now){ var t=now*0.001;
+      var au=liveAudio(); var ag=state.audio/100; var f;
+      if(au){ f={level:Math.min(1,au[0]*ag),bass:au[1]*ag,mid:au[2]*ag,high:au[3]*ag,onset:au[4]*ag,centroid:Math.min(1,(au[2]*0.5+au[3])/(au[1]+au[2]+au[3]+0.001))}; }
+      else { f={level:0.3+0.18*Math.sin(t*0.5),bass:0.3,mid:0.35,high:0.25,onset:Math.pow(Math.max(0,Math.sin(t*1.6)),16),centroid:0.5}; }
+      var bucket=Math.floor(state.style/100*23); if(bucket!==lastBucket){ lastBucket=bucket; setRecipe({seed:(Math.imul(bucket+1,2654435761)>>>0)}); }
+      var react=state.react/100, decay=0.85+state.decay/100*0.13, hue=state.hue/360;
+      if(!currentFB){ requestAnimationFrame(frame); return; }
+      var U=currentFB.U;
+      gl.bindFramebuffer(gl.FRAMEBUFFER,fboB); gl.viewport(0,0,W,H); gl.useProgram(currentFB.prog); bindQuad(currentFB.prog);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texA); gl.uniform1i(U.u_prev,0);
+      gl.uniform2f(U.u_res,W,H); gl.uniform1f(U.u_time,t);
+      gl.uniform1f(U.u_bass,f.bass);gl.uniform1f(U.u_mid,f.mid);gl.uniform1f(U.u_high,f.high);gl.uniform1f(U.u_level,f.level);gl.uniform1f(U.u_onset,f.onset);gl.uniform1f(U.u_centroid,f.centroid);
+      gl.uniform1f(U.u_react,react);gl.uniform1f(U.u_decay,decay);gl.uniform1f(U.u_hue,hue);gl.uniform1f(U.u_flow,1.0);gl.uniform1f(U.u_seed,0.5);
+      gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+      var tt=texA;texA=texB;texB=tt; var ff=fboA;fboA=fboB;fboB=ff;
+      gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,W,H); gl.useProgram(scProg); bindQuad(scProg);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texA); gl.uniform1i(scU.u_tex,0); gl.uniform2f(scU.u_res,W,H); gl.uniform1f(scU.u_onset,f.onset);
+      gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+      requestAnimationFrame(frame); }
+    window.addEventListener("resize",resize);
+    initGL(); resize();
+    syncHost(); if(!readHost()){ try{var sv=JSON.parse(localStorage.getItem("vj-state")||"null"); if(sv)applyLayer(sv[layerSlot]);}catch(e){} }
+    try{ (window.parent!==window?window.parent:window.opener).postMessage({type:"request-vj-state",role:"work",slot:layerSlot},"*"); }catch(e){}
+    window.setInterval(syncHost,120);
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

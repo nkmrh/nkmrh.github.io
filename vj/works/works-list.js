@@ -318,6 +318,10 @@ window.VJ_WORKS = [
     "label": "Snow"
   },
   {
+    "src": "works/sonogram.html",
+    "label": "Sonogram"
+  },
+  {
     "src": "works/spectrum.html",
     "label": "Spectrum"
   },
