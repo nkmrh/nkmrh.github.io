@@ -231,6 +231,11 @@
       if (event.data.type === "vj-state" && event.data.state) {
         applyState(event.data.state);
       }
+      if (event.data.type === "vj-audio" && event.data.a) {
+        // live audio features broadcast from the control; layers read window.__vjState.audio
+        if (!window.__vjState) window.__vjState = {};
+        window.__vjState.audio = event.data.a;
+      }
       if (event.data.type === "request-vj-state") {
         if (event.source === layerA.contentWindow) postStateToLayer(layerA);
         if (event.source === layerB.contentWindow) postStateToLayer(layerB);

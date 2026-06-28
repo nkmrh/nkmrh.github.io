@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Diptych — Reaction</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script id="vj-layer-protocol" type="application/json">
+    {
+      "id": "a",
+      "title": "Layer A",
+      "badge": "Reaction",
+      "controls": [
+        { "key": "feed", "label": "Pattern", "type": "range", "min": 0, "max": 100, "step": 1, "default": 40 },
+        { "key": "react", "label": "Speed", "type": "range", "min": 0, "max": 100, "step": 1, "default": 55 },
+        { "key": "audio", "label": "Audio", "type": "range", "min": 0, "max": 100, "step": 1, "default": 70 },
+        { "key": "hue", "label": "Accent", "type": "range", "min": 0, "max": 360, "step": 1, "default": 170 }
+      ]
+    }
+  </script>
+
+  <script>
+    const layerProtocol = JSON.parse(document.getElementById("vj-layer-protocol").textContent);
+    const requestedSlot = new URLSearchParams(window.location.search).get("slot");
+    const layerSlot = requestedSlot === "a" || requestedSlot === "b" ? requestedSlot : layerProtocol.id;
+    const runtimeProtocol = { ...layerProtocol, id: layerSlot, title: `Layer ${layerSlot.toUpperCase()}` };
+    function postLayerProtocol() {
+      if (window.parent && window.parent !== window) window.parent.postMessage({ type: "vj-layer-protocol", protocol: runtimeProtocol }, "*");
+    }
+    postLayerProtocol();
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "request-vj-layer-protocol") postLayerProtocol();
+    });
+
+    const protocolDefaults = (protocol) => (protocol.controls || []).reduce((acc, c) => { acc[c.key] = c.default; return acc; }, {});
+    const state = { ...protocolDefaults(runtimeProtocol) };
+    function requestStateFromHost() { const host = window.parent !== window ? window.parent : window.opener; if (!host) return; try { host.postMessage({ type: "request-vj-state", role: "work", slot: layerSlot }, "*"); } catch (e) {} }
+    function readStateFromHostWindow() { const host = window.parent !== window ? window.parent : window.opener; if (!host) return null; try { return host.__vjState || null; } catch (e) { return null; } }
+    function syncStateFromStorage() { if (readStateFromHostWindow()) return; try { const saved = JSON.parse(localStorage.getItem("vj-state") || "null"); if (saved) applyLayer(saved[layerSlot]); } catch (e) {} }
+    function applyLayer(next) { if (next) Object.assign(state, next); }
+    // live audio from the host's global engine (window.parent.__vjState.audio = [level,bass,mid,high,onset])
+    function hostAudio() { try { const s = (window.parent !== window ? window.parent : window.opener); return s && s.__vjState && s.__vjState.audio ? s.__vjState.audio : null; } catch (e) { return null; } }
+
+    const canvas = document.getElementById("canvas");
+    const gl = canvas.getContext("webgl", { antialias: false, alpha: false });
+    gl.getExtension("OES_texture_float"); gl.getExtension("OES_texture_float_linear");
+    gl.getExtension("OES_texture_half_float"); gl.getExtension("OES_texture_half_float_linear");
+    let TYPE = gl.FLOAT, dpr = 1, SW = 2, SH = 2;
+    const VS = "attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }";
+    function mkP(src) { const p = gl.createProgram(); const v = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(v, VS); gl.compileShader(v);
+      const f = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(f, src); gl.compileShader(f); if (!gl.getShaderParameter(f, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(f));
+      gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p); return p; }
+    const COMMON = `precision highp float; uniform vec2 u_res; float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }`;
+    const INIT = mkP(COMMON + `void main(){ vec2 uv=gl_FragCoord.xy/u_res; float v=0.0; for(int i=0;i<22;i++){ float fi=float(i); vec2 c=vec2(hash(vec2(fi,1.0)),hash(vec2(fi,7.0))); if(distance(uv,c)<0.03) v=1.0; } gl_FragColor=vec4(1.0,v,0.0,1.0); }`);
+    const SIM = mkP(COMMON + `uniform sampler2D u_state; uniform vec2 u_texel; uniform float u_feed,u_kill,u_du,u_dv,u_seedAmt; uniform vec2 u_seedPos;
+      void main(){ vec2 uv=gl_FragCoord.xy/u_res; vec4 s=texture2D(u_state,uv);
+        vec4 n=texture2D(u_state,uv+vec2(0.0,1.0)*u_texel), so=texture2D(u_state,uv+vec2(0.0,-1.0)*u_texel), e=texture2D(u_state,uv+vec2(1.0,0.0)*u_texel), w=texture2D(u_state,uv+vec2(-1.0,0.0)*u_texel);
+        vec4 ne=texture2D(u_state,uv+vec2(1.0,1.0)*u_texel), nw=texture2D(u_state,uv+vec2(-1.0,1.0)*u_texel), se=texture2D(u_state,uv+vec2(1.0,-1.0)*u_texel), sw=texture2D(u_state,uv+vec2(-1.0,-1.0)*u_texel);
+        float lapU=-s.r+0.2*(n.r+so.r+e.r+w.r)+0.05*(ne.r+nw.r+se.r+sw.r), lapV=-s.g+0.2*(n.g+so.g+e.g+w.g)+0.05*(ne.g+nw.g+se.g+sw.g);
+        float u=s.r, v=s.g, uvv=u*v*v; u+=u_du*lapU-uvv+u_feed*(1.0-u); v+=u_dv*lapV+uvv-(u_feed+u_kill)*v;
+        float d=distance(uv,u_seedPos); v+=u_seedAmt*exp(-d*d*500.0); gl_FragColor=vec4(clamp(u,0.0,1.0),clamp(v,0.0,1.0),0.0,1.0); }`);
+    const SHOW = mkP(COMMON + `uniform sampler2D u_state; uniform float u_hue,u_onset,u_invert;
+      vec3 hsv(float h,float s,float v){ vec3 c=clamp(abs(mod(h*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0,0.0,1.0); return v*mix(vec3(1.0),c,s); }
+      void main(){ vec2 uv=gl_FragCoord.xy/u_res; float v=texture2D(u_state,uv).g; float fill=smoothstep(0.16,0.30,v);
+        vec3 plate=vec3(0.03,0.03,0.04), sand=vec3(0.95,0.95,0.93); vec3 col=mix(plate,sand,fill); col=mix(col,vec3(1.0)-col,u_invert);
+        col=mix(col,hsv(fract(u_hue),0.85,1.0),smoothstep(0.05,0.0,abs(v-0.23))*0.9); col+=u_onset*0.05; gl_FragColor=vec4(col,1.0); }`);
+    const quad = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, quad); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    function bindQuad(p) { gl.bindBuffer(gl.ARRAY_BUFFER, quad); const l = gl.getAttribLocation(p, "p"); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, 2, gl.FLOAT, false, 0, 0); }
+    const U = (p, n) => gl.getUniformLocation(p, n);
+    function makeT(w, h) { const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, TYPE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const f = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, f); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0); return { t, f }; }
+    let texA, texB, fboA, fboB;
+    function alloc() { const cap = 240, ar = innerWidth / innerHeight; // small res: two layers + preview share the GPU
+      if (ar >= 1) { SW = cap; SH = Math.max(2, Math.round(cap / ar)); } else { SH = cap; SW = Math.max(2, Math.round(cap * ar)); }
+      const probe = makeT(SW, SH); gl.bindFramebuffer(gl.FRAMEBUFFER, probe.f);
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE && TYPE === gl.FLOAT) { const hf = gl.getExtension("OES_texture_half_float"); TYPE = hf ? hf.HALF_FLOAT_OES : gl.UNSIGNED_BYTE; }
+      const a = makeT(SW, SH), b = makeT(SW, SH); texA = a.t; fboA = a.f; texB = b.t; fboB = b.f;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fboA); gl.viewport(0, 0, SW, SH); gl.useProgram(INIT); bindQuad(INIT); gl.uniform2f(U(INIT, "u_res"), SW, SH); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fboB); gl.useProgram(INIT); bindQuad(INIT); gl.uniform2f(U(INIT, "u_res"), SW, SH); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
+    function resize() { dpr = Math.min(1.5, window.devicePixelRatio || 1); canvas.width = Math.floor(innerWidth * dpr); canvas.height = Math.floor(innerHeight * dpr);
+      canvas.style.width = innerWidth + "px"; canvas.style.height = innerHeight + "px"; alloc(); }
+
+    let seedPos = [0.5, 0.5], seedAmt = 0;
+    function draw() {
+      const au = hostAudio(); const ag = state.audio / 100;
+      const level = au ? Math.min(1, au[0] * ag) : 0, bass = au ? au[1] * ag : 0, onset = au ? au[4] * ag : 0;
+      const feed = 0.030 + state.feed / 100 * 0.030 + bass * 0.012, kill = 0.062;
+      const sub = Math.round(5 + state.react / 100 * 8 + level * 6);
+      if (onset > 0.18) { seedPos = [Math.random(), Math.random()]; seedAmt = Math.min(0.9, onset * 0.8); }
+      else if (!au && Math.random() < 0.012) { seedPos = [Math.random(), Math.random()]; seedAmt = 0.7; } // self-drive when no audio
+      seedAmt *= 0.6;
+      gl.useProgram(SIM); bindQuad(SIM); gl.uniform2f(U(SIM, "u_res"), SW, SH); gl.uniform2f(U(SIM, "u_texel"), 1 / SW, 1 / SH);
+      gl.uniform1f(U(SIM, "u_feed"), feed); gl.uniform1f(U(SIM, "u_kill"), kill); gl.uniform1f(U(SIM, "u_du"), 0.16); gl.uniform1f(U(SIM, "u_dv"), 0.08);
+      for (let s = 0; s < sub; s++) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fboB); gl.viewport(0, 0, SW, SH);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA); gl.uniform1i(U(SIM, "u_state"), 0);
+        gl.uniform1f(U(SIM, "u_seedAmt"), s === 0 ? seedAmt : 0.0); gl.uniform2f(U(SIM, "u_seedPos"), seedPos[0], seedPos[1]);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        let tt = texA; texA = texB; texB = tt; let ff = fboA; fboA = fboB; fboB = ff;
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height); gl.useProgram(SHOW); bindQuad(SHOW);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA); gl.uniform1i(U(SHOW, "u_state"), 0);
+      gl.uniform2f(U(SHOW, "u_res"), canvas.width, canvas.height); gl.uniform1f(U(SHOW, "u_hue"), state.hue / 360); gl.uniform1f(U(SHOW, "u_onset"), onset); gl.uniform1f(U(SHOW, "u_invert"), 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      requestAnimationFrame(draw);
+    }
+
+    window.addEventListener("message", (event) => { if (event.data && event.data.type === "vj-state" && event.data.state) applyLayer(event.data.state[layerSlot]); });
+    window.addEventListener("storage", () => { syncStateFromStorage(); });
+    function syncStateFromHostWindow() { const h = readStateFromHostWindow(); if (h) applyLayer(h[layerSlot]); }
+    window.addEventListener("resize", resize);
+    resize(); requestAnimationFrame(draw);
+    syncStateFromHostWindow(); syncStateFromStorage(); requestStateFromHost();
+    window.setInterval(syncStateFromHostWindow, 120); window.setInterval(syncStateFromStorage, 120);
+  </script>
+</body>
+</html>

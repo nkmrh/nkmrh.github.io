@@ -274,6 +274,10 @@ window.VJ_WORKS = [
     "label": "Rays"
   },
   {
+    "src": "works/reaction.html",
+    "label": "Reaction"
+  },
+  {
     "src": "works/rings.html",
     "label": "Rings"
   },

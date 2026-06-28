@@ -615,6 +615,7 @@
       </div>
       <div class="actions">
         <button class="button primary" id="openOutput" type="button">Open Output</button>
+        <button class="button" id="audioBtn" type="button">🎤 Audio</button>
         <button class="button" id="mono" type="button">Mono</button>
         <button class="button" id="blackout" type="button">Blackout</button>
         <button class="button" id="reset" type="button">Reset</button>
@@ -1585,7 +1586,44 @@
       };
     }
 
+    // Global audio engine: capture the mic once here, broadcast features to every
+    // layer (via window.__vjState.audio + a per-frame "vj-audio" message to the
+    // preview and the popped output). Audio-reactive works read parent.__vjState.audio.
+    const AudioBus = {
+      ctx: null, an: null, freq: null, time: null, prevF: null, on: false, fluxAvg: 0, feat: [0, 0, 0, 0, 0],
+      async start() {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        this.an = this.ctx.createAnalyser(); this.an.fftSize = 2048; this.an.smoothingTimeConstant = 0.6;
+        this.freq = new Uint8Array(this.an.frequencyBinCount); this.time = new Uint8Array(this.an.fftSize); this.prevF = new Float32Array(this.an.frequencyBinCount);
+        const st = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+        this.ctx.createMediaStreamSource(st).connect(this.an); this.on = true;
+      },
+      tick() {
+        if (!this.on || !this.an) return;
+        this.an.getByteFrequencyData(this.freq); this.an.getByteTimeDomainData(this.time);
+        let sum = 0; for (let i = 0; i < this.time.length; i++) { const v = (this.time[i] - 128) / 128; sum += v * v; }
+        const level = Math.min(1, Math.sqrt(sum / this.time.length) * 2.4);
+        const N = this.freq.length, ny = this.ctx.sampleRate / 2; let bass = 0, mid = 0, high = 0, flux = 0;
+        for (let i = 1; i < N; i++) { const hz = i / N * ny, m = this.freq[i] / 255; if (hz < 200) bass += m; else if (hz < 2000) mid += m; else high += m; const d = m - this.prevF[i]; if (d > 0) flux += d; this.prevF[i] = m; }
+        bass = Math.min(1, bass / (200 / ny * N) * 1.2); mid = Math.min(1, mid / (1800 / ny * N) * 2.2); high = Math.min(1, high / ((ny - 2000) / ny * N) * 3.5);
+        this.fluxAvg = this.fluxAvg * 0.92 + flux * 0.08; const onset = Math.max(0, Math.min(1, (flux - this.fluxAvg * 1.5) * 0.05));
+        const f = this.feat;
+        f[0] += (level - f[0]) * 0.5; f[1] += (bass - f[1]) * 0.5; f[2] += (mid - f[2]) * 0.4; f[3] += (high - f[3]) * 0.4; f[4] = Math.max(onset, f[4] * 0.8);
+        if (window.__vjState) window.__vjState.audio = f;
+        const msg = { type: "vj-audio", a: f };
+        try { if (previewFrame.contentWindow) previewFrame.contentWindow.postMessage(msg, "*"); } catch (e) {}
+        try { if (outputWindow && !outputWindow.closed) outputWindow.postMessage(msg, "*"); } catch (e) {}
+      }
+    };
+    document.getElementById("audioBtn").addEventListener("click", async () => {
+      const b = document.getElementById("audioBtn");
+      if (AudioBus.on) { AudioBus.on = false; b.classList.remove("active"); b.textContent = "🎤 Audio"; return; }
+      try { await AudioBus.start(); b.classList.add("active"); b.textContent = "🎤 Audio ✓"; }
+      catch (e) { alert("マイクを取得できませんでした: " + e.message); }
+    });
+
     function animateAutoMix(now) {
+      AudioBus.tick();
       if (mixTransition) {
         const t = Math.min(1, (now - mixTransition.startMs) / mixTransition.durationMs);
         const eased = shapeCurve(t, mixTransition.shape);
