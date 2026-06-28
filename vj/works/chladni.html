@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Diptych — Chladni</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script id="vj-layer-protocol" type="application/json">
+    {
+      "id": "a",
+      "title": "Layer A",
+      "badge": "Chladni",
+      "controls": [
+        { "key": "mode", "label": "Figure", "type": "range", "min": 0, "max": 100, "step": 1, "default": 40 },
+        { "key": "amount", "label": "Sand", "type": "range", "min": 0, "max": 100, "step": 1, "default": 55 },
+        { "key": "grain", "label": "Grain", "type": "range", "min": 0, "max": 100, "step": 1, "default": 40 },
+        { "key": "audio", "label": "Audio", "type": "range", "min": 0, "max": 100, "step": 1, "default": 70 }
+      ]
+    }
+  </script>
+
+  <script>
+    const layerProtocol = JSON.parse(document.getElementById("vj-layer-protocol").textContent);
+    const requestedSlot = new URLSearchParams(window.location.search).get("slot");
+    const layerSlot = requestedSlot === "a" || requestedSlot === "b" ? requestedSlot : layerProtocol.id;
+    const runtimeProtocol = { ...layerProtocol, id: layerSlot, title: `Layer ${layerSlot.toUpperCase()}` };
+    function postLayerProtocol() { if (window.parent && window.parent !== window) window.parent.postMessage({ type: "vj-layer-protocol", protocol: runtimeProtocol }, "*"); }
+    postLayerProtocol();
+    window.addEventListener("message", (event) => { if (event.data && event.data.type === "request-vj-layer-protocol") postLayerProtocol(); });
+    const protocolDefaults = (protocol) => (protocol.controls || []).reduce((acc, c) => { acc[c.key] = c.default; return acc; }, {});
+    const state = { ...protocolDefaults(runtimeProtocol) };
+    function requestStateFromHost() { const host = window.parent !== window ? window.parent : window.opener; if (!host) return; try { host.postMessage({ type: "request-vj-state", role: "work", slot: layerSlot }, "*"); } catch (e) {} }
+    function readStateFromHostWindow() { const host = window.parent !== window ? window.parent : window.opener; if (!host) return null; try { return host.__vjState || null; } catch (e) { return null; } }
+    function syncStateFromStorage() { if (readStateFromHostWindow()) return; try { const saved = JSON.parse(localStorage.getItem("vj-state") || "null"); if (saved) applyLayer(saved[layerSlot]); } catch (e) {} }
+    function applyLayer(next) { if (next) Object.assign(state, next); }
+    function hostAudio() { try { const s = (window.parent !== window ? window.parent : window.opener); return s && s.__vjState && s.__vjState.audio ? s.__vjState.audio : null; } catch (e) { return null; } }
+
+    // ---- small dense linear algebra ----
+    function cholesky(Mf, n){ const L = new Float64Array(n*n);
+      for (let i=0;i<n;i++) for (let j=0;j<=i;j++){ let s = Mf[i*n+j]; for (let k=0;k<j;k++) s -= L[i*n+k]*L[j*n+k];
+        if (i===j) L[i*n+i] = Math.sqrt(Math.max(s,1e-12)); else L[i*n+j] = s / L[j*n+j]; } return L; }
+    function fwd(L, Bf, n){ const Y = new Float64Array(n*n); for (let c=0;c<n;c++) for (let i=0;i<n;i++){ let s = Bf[i*n+c]; for (let p=0;p<i;p++) s -= L[i*n+p]*Y[p*n+c]; Y[i*n+c] = s / L[i*n+i]; } return Y; }
+    function backT(L, Bf, n){ const Y = new Float64Array(n*n); for (let c=0;c<n;c++) for (let i=n-1;i>=0;i--){ let s = Bf[i*n+c]; for (let p=i+1;p<n;p++) s -= L[p*n+i]*Y[p*n+c]; Y[i*n+c] = s / L[i*n+i]; } return Y; }
+    function transpose(Af, n){ const T = new Float64Array(n*n); for (let i=0;i<n;i++) for (let j=0;j<n;j++) T[j*n+i]=Af[i*n+j]; return T; }
+    function jacobi(Af, n){ const A = Af.slice(); const V = new Float64Array(n*n); for (let i=0;i<n;i++) V[i*n+i]=1;
+      for (let sweep=0; sweep<60; sweep++){ let off=0; for (let p=0;p<n;p++) for (let q=p+1;q<n;q++) off += A[p*n+q]*A[p*n+q]; if (off < 1e-18) break;
+        for (let p=0;p<n;p++) for (let q=p+1;q<n;q++){ const apq=A[p*n+q]; if (Math.abs(apq)<1e-14) continue; const app=A[p*n+p], aqq=A[q*n+q]; const phi=0.5*Math.atan2(2*apq, aqq-app); const c=Math.cos(phi), s=Math.sin(phi);
+          for (let k=0;k<n;k++){ const akp=A[k*n+p], akq=A[k*n+q]; A[k*n+p]=c*akp - s*akq; A[k*n+q]=s*akp + c*akq; }
+          for (let k=0;k<n;k++){ const apk=A[p*n+k], aqk=A[q*n+k]; A[p*n+k]=c*apk - s*aqk; A[q*n+k]=s*apk + c*aqk; }
+          for (let k=0;k<n;k++){ const vkp=V[k*n+p], vkq=V[k*n+q]; V[k*n+p]=c*vkp - s*vkq; V[k*n+q]=s*vkp + c*vkq; } } }
+      const val = new Float64Array(n); for (let i=0;i<n;i++) val[i]=A[i*n+i]; return { val, vec: V }; }
+
+    // ---- free-free beam basis + Rayleigh-Ritz eigenmodes of a free square plate ----
+    const NU = 0.3, B = 8;
+    const BETA = [4.7300407448627, 7.8532046240958, 10.9956078380017, 14.1371654913251, 17.2787596573995, 20.4203522510411];
+    const SQ3 = Math.sqrt(3);
+    function sig(b){ return (Math.cosh(b)-Math.cos(b))/(Math.sinh(b)-Math.sin(b)); }
+    function Xv(i,t){ if(i===0) return 1; if(i===1) return SQ3*(2*t-1); const b=BETA[i-2], s=sig(b); return Math.cosh(b*t)+Math.cos(b*t) - s*(Math.sinh(b*t)+Math.sin(b*t)); }
+    let MODES = [];
+    function computeModes(){
+      const NQ = 200, qw = 1/NQ, qs = []; for (let q=0;q<NQ;q++) qs.push((q+0.5)/NQ);
+      const X1=(i,t)=>{ if(i===0) return 0; if(i===1) return 2*SQ3; const b=BETA[i-2], s=sig(b); return b*(Math.sinh(b*t)-Math.sin(b*t)) - s*b*(Math.cosh(b*t)+Math.cos(b*t)); };
+      const X2=(i,t)=>{ if(i<=1) return 0; const b=BETA[i-2], s=sig(b), b2=b*b; return b2*(Math.cosh(b*t)-Math.cos(b*t)) - s*b2*(Math.sinh(b*t)-Math.sin(b*t)); };
+      const v0=[],v1=[],v2=[]; for (let i=0;i<B;i++){ v0[i]=qs.map(t=>Xv(i,t)); v1[i]=qs.map(t=>X1(i,t)); v2[i]=qs.map(t=>X2(i,t)); }
+      const ig=(a,b)=>{ let s=0; for(let q=0;q<NQ;q++) s+=a[q]*b[q]; return s*qw; };
+      const E=[],F=[],G=[],H=[]; for (let i=0;i<B;i++){ E[i]=[];F[i]=[];G[i]=[];H[i]=[]; for (let k=0;k<B;k++){ E[i][k]=ig(v0[i],v0[k]); F[i][k]=ig(v2[i],v2[k]); G[i][k]=ig(v2[i],v0[k]); H[i][k]=ig(v1[i],v1[k]); } }
+      const n=B*B, K=new Float64Array(n*n), M=new Float64Array(n*n);
+      for (let i=0;i<B;i++) for (let j=0;j<B;j++){ const II=i*B+j; for (let k=0;k<B;k++) for (let l=0;l<B;l++){ const KK=k*B+l;
+        M[II*n+KK] = E[i][k]*E[j][l]; K[II*n+KK] = F[i][k]*E[j][l] + E[i][k]*F[j][l] + 2*NU*G[i][k]*G[l][j] + 2*(1-NU)*H[i][k]*H[j][l]; } }
+      for (let a=0;a<n;a++) for (let b=a+1;b<n;b++){ const s=0.5*(K[a*n+b]+K[b*n+a]); K[a*n+b]=s; K[b*n+a]=s; }
+      const L = cholesky(M, n); const T = fwd(L, K, n); const A = transpose(fwd(L, transpose(T, n), n), n);
+      const { val, vec } = jacobi(A, n); const C = backT(L, vec, n);
+      const idx = [...val.keys()].sort((p,q)=>val[p]-val[q]); MODES = [];
+      for (const id of idx){ if (val[id] < 1e-3) continue; const c = new Float64Array(n); for (let r=0;r<n;r++) c[r]=C[r*n+id]; MODES.push({ c }); if (MODES.length >= 28) break; }
+    }
+    const GS = 100; const field = new Float32Array(GS*GS); const Bg = [];
+    function buildFieldTable(){ for (let i=0;i<B;i++){ Bg[i]=new Float64Array(GS); for (let g=0;g<GS;g++) Bg[i][g]=Xv(i,(g+0.5)/GS); } }
+    function buildField(mi){ const c = MODES[mi].c; let mx=1e-6; const cx = new Float64Array(B);
+      for (let gx=0;gx<GS;gx++){ for (let j=0;j<B;j++){ let s=0; for (let i=0;i<B;i++) s += c[i*B+j]*Bg[i][gx]; cx[j]=s; }
+        for (let gy=0;gy<GS;gy++){ let w=0; for (let j=0;j<B;j++) w += cx[j]*Bg[j][gy]; const av=Math.abs(w); field[gx*GS+gy]=av; if (av>mx) mx=av; } }
+      const inv=1/mx; for (let i=0;i<field.length;i++) field[i]*=inv; }
+    function sampleField(x, y){ const fx=((x+1)*0.5)*GS-0.5, fy=((y+1)*0.5)*GS-0.5; let x0=Math.floor(fx), y0=Math.floor(fy); const tx=fx-x0, ty=fy-y0;
+      x0=Math.max(0,Math.min(GS-2,x0)); y0=Math.max(0,Math.min(GS-2,y0));
+      const a=field[x0*GS+y0], b=field[(x0+1)*GS+y0], cc=field[x0*GS+y0+1], d=field[(x0+1)*GS+y0+1];
+      return (a*(1-tx)+b*tx)*(1-ty) + (cc*(1-tx)+d*tx)*ty; }
+
+    // ---- webgl points ----
+    const canvas=document.getElementById("canvas");
+    const gl=canvas.getContext("webgl",{antialias:true,alpha:false});
+    let dpr=1;
+    const VS=`attribute vec2 p; uniform vec2 u_res; uniform float u_ps; void main(){ float s=min(u_res.x,u_res.y); gl_Position=vec4(p.x*s/u_res.x, p.y*s/u_res.y, 0.0, 1.0); gl_PointSize=u_ps; }`;
+    const FS=`precision mediump float; uniform vec3 u_col; void main(){ vec2 d=gl_PointCoord-0.5; if(dot(d,d)>0.25) discard; gl_FragColor=vec4(u_col,1.0); }`;
+    function comp(t,s){ const sh=gl.createShader(t); gl.shaderSource(sh,s); gl.compileShader(sh); return sh; }
+    const prog=gl.createProgram(); gl.attachShader(prog,comp(gl.VERTEX_SHADER,VS)); gl.attachShader(prog,comp(gl.FRAGMENT_SHADER,FS)); gl.linkProgram(prog); gl.useProgram(prog);
+    const U={}; ["u_res","u_ps","u_col"].forEach(k=>U[k]=gl.getUniformLocation(prog,k)); const aLoc=gl.getAttribLocation(prog,"p"); const vbo=gl.createBuffer();
+    const MAXN=11000, posv=new Float32Array(MAXN*2); let N=7000;
+    function seed(){ for(let i=0;i<MAXN;i++){ posv[i*2]=Math.random()*2-1; posv[i*2+1]=Math.random()*2-1; } }
+    function resize(){ dpr=Math.min(1.75,window.devicePixelRatio||1); canvas.width=Math.floor(innerWidth*dpr); canvas.height=Math.floor(innerHeight*dpr); canvas.style.width=innerWidth+"px"; canvas.style.height=innerHeight+"px"; gl.viewport(0,0,canvas.width,canvas.height); }
+
+    // ---- sim + loop ----
+    let curMode=-1;
+    function setMode(i){ i=Math.max(0,Math.min(MODES.length-1,i)); if(i===curMode) return; curMode=i; buildField(i); }
+    function update(loud){ const kick=0.07+0.06*loud, base=0.0004;
+      for(let sub=0;sub<3;sub++){ for(let i=0;i<N;i++){ let x=posv[i*2], y=posv[i*2+1]; const a=sampleField(x,y); const step=kick*a+base;
+        x+=(Math.random()*2-1)*step; y+=(Math.random()*2-1)*step;
+        if(x>1) x=2-x; else if(x<-1) x=-2-x; if(y>1) y=2-y; else if(y<-1) y=-2-y; posv[i*2]=x; posv[i*2+1]=y; } } }
+
+    function draw(now){ const t=now*0.001;
+      const au=hostAudio(); const ag=state.audio/100;
+      let loud, modeIdx;
+      if(au){ const level=Math.min(1,au[0]*ag), bass=au[1], mid=au[2], high=au[3];
+        const bright = (mid*0.5 + high) / (bass + mid + high + 0.001);   // spectral brightness ~ pitch
+        modeIdx = Math.round((state.mode/100*0.35 + bright*0.65) * (MODES.length-1));
+        loud = 0.45 + level*0.7;
+      } else { modeIdx = Math.round((0.5 + 0.5*Math.sin(t*0.25)) * (MODES.length-1)); loud = 0.7; }
+      setMode(modeIdx);
+      N = Math.round(3000 + state.amount/100*(MAXN-3000));
+      update(loud);
+      gl.clearColor(0.05,0.05,0.06,1); gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,posv.subarray(0,N*2),gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(aLoc); gl.vertexAttribPointer(aLoc,2,gl.FLOAT,false,0,0);
+      gl.uniform2f(U.u_res,canvas.width,canvas.height); gl.uniform1f(U.u_ps,(1.2+state.grain/100*4.0)*dpr); gl.uniform3f(U.u_col,0.96,0.92,0.83);
+      gl.drawArrays(gl.POINTS,0,N);
+      requestAnimationFrame(draw);
+    }
+
+    window.addEventListener("message", (event) => { if (event.data && event.data.type === "vj-state" && event.data.state) applyLayer(event.data.state[layerSlot]); });
+    window.addEventListener("storage", () => { syncStateFromStorage(); });
+    function syncStateFromHostWindow() { const h = readStateFromHostWindow(); if (h) applyLayer(h[layerSlot]); }
+    window.addEventListener("resize", resize);
+    buildFieldTable(); computeModes(); buildField(0); curMode = 0;
+    resize(); seed(); requestAnimationFrame(draw);
+    syncStateFromHostWindow(); syncStateFromStorage(); requestStateFromHost();
+    window.setInterval(syncStateFromHostWindow, 120); window.setInterval(syncStateFromStorage, 120);
+  </script>
+</body>
+</html>

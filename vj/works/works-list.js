@@ -50,6 +50,10 @@ window.VJ_WORKS = [
     "label": "Checker"
   },
   {
+    "src": "works/chladni.html",
+    "label": "Chladni"
+  },
+  {
     "src": "works/chrome.html",
     "label": "Chrome"
   },
