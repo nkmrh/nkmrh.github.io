@@ -42,6 +42,8 @@
     function syncStateFromStorage() { if (readStateFromHostWindow()) return; try { const saved = JSON.parse(localStorage.getItem("vj-state") || "null"); if (saved) applyLayer(saved[layerSlot]); } catch (e) {} }
     function applyLayer(next) { if (next) Object.assign(state, next); }
     function hostAudio() { try { const s = (window.parent !== window ? window.parent : window.opener); return s && s.__vjState && s.__vjState.audio ? s.__vjState.audio : null; } catch (e) { return null; } }
+    let lastAudio = null, lastAudioT = 0;
+    function liveAudio() { return (performance.now() - lastAudioT < 300) ? lastAudio : hostAudio(); }
 
     const canvas = document.getElementById("canvas");
     const gl = canvas.getContext("webgl", { antialias: false, alpha: false });
@@ -85,7 +87,7 @@
 
     function draw() {
       let velP = [vel, vel2], dyeP = [dye, dye2], prsP = [prs, prs2];
-      const au = hostAudio(); const ag = state.audio / 100;
+      const au = liveAudio(); const ag = state.audio / 100;
       const level = au ? Math.min(1, au[0] * ag) : 0, onset = au ? au[4] * ag : 0;
       const F = 0.6 + state.force / 100 * 1.0;
       const emit = 0.16 + level * 0.7;
@@ -110,7 +112,7 @@
       requestAnimationFrame(draw);
     }
 
-    window.addEventListener("message", (event) => { if (event.data && event.data.type === "vj-state" && event.data.state) applyLayer(event.data.state[layerSlot]); });
+    window.addEventListener("message", (event) => { if (!event.data) return; if (event.data.type === "vj-state" && event.data.state) applyLayer(event.data.state[layerSlot]); if (event.data.type === "vj-audio" && event.data.a) { lastAudio = event.data.a; lastAudioT = performance.now(); } });
     window.addEventListener("storage", () => { syncStateFromStorage(); });
     function syncStateFromHostWindow() { const h = readStateFromHostWindow(); if (h) applyLayer(h[layerSlot]); }
     window.addEventListener("resize", resize);

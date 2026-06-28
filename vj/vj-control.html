@@ -1387,6 +1387,12 @@
     window.addEventListener("message", (event) => {
       if (!event.data) return;
       if (event.data.type === "vj-state" && event.data.state) applyState(event.data.state);
+      if (event.data.type === "vj-audio" && event.data.a) {
+        if (!window.__vjState) window.__vjState = {};
+        window.__vjState.audio = event.data.a;
+        try { if (layerA.contentWindow) layerA.contentWindow.postMessage(event.data, "*"); } catch (e) {}
+        try { if (layerB.contentWindow) layerB.contentWindow.postMessage(event.data, "*"); } catch (e) {}
+      }
       if (event.data.type === "request-vj-state") {
         if (event.source === layerA.contentWindow) postStateToLayer(layerA);
         if (event.source === layerB.contentWindow) postStateToLayer(layerB);

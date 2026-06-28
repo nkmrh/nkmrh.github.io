@@ -47,6 +47,8 @@
     function applyLayer(next) { if (next) Object.assign(state, next); }
     // live audio from the host's global engine (window.parent.__vjState.audio = [level,bass,mid,high,onset])
     function hostAudio() { try { const s = (window.parent !== window ? window.parent : window.opener); return s && s.__vjState && s.__vjState.audio ? s.__vjState.audio : null; } catch (e) { return null; } }
+    let lastAudio = null, lastAudioT = 0;
+    function liveAudio() { return (performance.now() - lastAudioT < 300) ? lastAudio : hostAudio(); }
 
     const canvas = document.getElementById("canvas");
     const gl = canvas.getContext("webgl", { antialias: false, alpha: false });
@@ -91,7 +93,7 @@
 
     let seedPos = [0.5, 0.5], seedAmt = 0;
     function draw() {
-      const au = hostAudio(); const ag = state.audio / 100;
+      const au = liveAudio(); const ag = state.audio / 100;
       const level = au ? Math.min(1, au[0] * ag) : 0, bass = au ? au[1] * ag : 0, onset = au ? au[4] * ag : 0;
       const feed = 0.030 + state.feed / 100 * 0.030 + bass * 0.012, kill = 0.062;
       const sub = Math.round(5 + state.react / 100 * 8 + level * 6);
@@ -114,7 +116,7 @@
       requestAnimationFrame(draw);
     }
 
-    window.addEventListener("message", (event) => { if (event.data && event.data.type === "vj-state" && event.data.state) applyLayer(event.data.state[layerSlot]); });
+    window.addEventListener("message", (event) => { if (!event.data) return; if (event.data.type === "vj-state" && event.data.state) applyLayer(event.data.state[layerSlot]); if (event.data.type === "vj-audio" && event.data.a) { lastAudio = event.data.a; lastAudioT = performance.now(); } });
     window.addEventListener("storage", () => { syncStateFromStorage(); });
     function syncStateFromHostWindow() { const h = readStateFromHostWindow(); if (h) applyLayer(h[layerSlot]); }
     window.addEventListener("resize", resize);

@@ -41,6 +41,8 @@
     function syncStateFromStorage() { if (readStateFromHostWindow()) return; try { const saved = JSON.parse(localStorage.getItem("vj-state") || "null"); if (saved) applyLayer(saved[layerSlot]); } catch (e) {} }
     function applyLayer(next) { if (next) Object.assign(state, next); }
     function hostAudio() { try { const s = (window.parent !== window ? window.parent : window.opener); return s && s.__vjState && s.__vjState.audio ? s.__vjState.audio : null; } catch (e) { return null; } }
+    let lastAudio = null, lastAudioT = 0;
+    function liveAudio() { return (performance.now() - lastAudioT < 300) ? lastAudio : hostAudio(); }
 
     // ---- small dense linear algebra ----
     function cholesky(Mf, n){ const L = new Float64Array(n*n);
@@ -113,7 +115,7 @@
         if(x>1) x=2-x; else if(x<-1) x=-2-x; if(y>1) y=2-y; else if(y<-1) y=-2-y; posv[i*2]=x; posv[i*2+1]=y; } } }
 
     function draw(now){ const t=now*0.001;
-      const au=hostAudio(); const ag=state.audio/100;
+      const au=liveAudio(); const ag=state.audio/100;
       let loud, modeIdx;
       if(au){ const level=Math.min(1,au[0]*ag), bass=au[1], mid=au[2], high=au[3];
         const bright = (mid*0.5 + high) / (bass + mid + high + 0.001);   // spectral brightness ~ pitch
@@ -131,7 +133,7 @@
       requestAnimationFrame(draw);
     }
 
-    window.addEventListener("message", (event) => { if (event.data && event.data.type === "vj-state" && event.data.state) applyLayer(event.data.state[layerSlot]); });
+    window.addEventListener("message", (event) => { if (!event.data) return; if (event.data.type === "vj-state" && event.data.state) applyLayer(event.data.state[layerSlot]); if (event.data.type === "vj-audio" && event.data.a) { lastAudio = event.data.a; lastAudioT = performance.now(); } });
     window.addEventListener("storage", () => { syncStateFromStorage(); });
     function syncStateFromHostWindow() { const h = readStateFromHostWindow(); if (h) applyLayer(h[layerSlot]); }
     window.addEventListener("resize", resize);

@@ -232,9 +232,12 @@
         applyState(event.data.state);
       }
       if (event.data.type === "vj-audio" && event.data.a) {
-        // live audio features broadcast from the control; layers read window.__vjState.audio
+        // live audio features from the control; relay to the layer works (postMessage
+        // is robust across same-origin https AND opaque file:// frames)
         if (!window.__vjState) window.__vjState = {};
         window.__vjState.audio = event.data.a;
+        try { if (layerA.contentWindow) layerA.contentWindow.postMessage(event.data, "*"); } catch (e) {}
+        try { if (layerB.contentWindow) layerB.contentWindow.postMessage(event.data, "*"); } catch (e) {}
       }
       if (event.data.type === "request-vj-state") {
         if (event.source === layerA.contentWindow) postStateToLayer(layerA);
