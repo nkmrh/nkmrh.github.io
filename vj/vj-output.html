@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Diptych — Output</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <!-- iOS has no element-fullscreen API; "Add to Home Screen" launches this
+       standalone (no Safari chrome) which is the real fullscreen for AirPlay. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Diptych Display" />
   <style>
     html, body {
       margin: 0;
@@ -231,17 +237,27 @@
       frame.style.display = "";
     }
 
+    function fsElement() {
+      return document.fullscreenElement || document.webkitFullscreenElement || null;
+    }
     function updateFullscreenButton() {
-      fullscreenButton.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
+      fullscreenButton.textContent = fsElement() ? "Exit Fullscreen" : "Fullscreen";
     }
 
     async function toggleFullscreen() {
+      const el = document.documentElement;
+      const request = el.requestFullscreen || el.webkitRequestFullscreen;
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      // iOS Safari exposes no element-fullscreen API: explain instead of silently
+      // doing nothing (the real fullscreen there is "Add to Home Screen").
+      if (!request) {
+        showLinkStatus("iOS は全画面API非対応 — 共有メニュー→『ホーム画面に追加』で起動すると全画面になります");
+        window.setTimeout(() => showLinkStatus(null), 4500);
+        return;
+      }
       try {
-        if (document.fullscreenElement) {
-          await document.exitFullscreen();
-        } else {
-          await document.documentElement.requestFullscreen();
-        }
+        if (fsElement()) await exit.call(document);
+        else await request.call(el);
       } catch (error) {
         console.warn(error);
       }
@@ -253,7 +269,7 @@
       hud.classList.remove("hidden");
       clearTimeout(hudTimer);
       hudTimer = window.setTimeout(() => {
-        if (document.fullscreenElement) hud.classList.add("hidden");
+        if (fsElement()) hud.classList.add("hidden");
       }, 1800);
     }
 
@@ -287,6 +303,10 @@
     fullscreenButton.addEventListener("click", toggleFullscreen);
 
     document.addEventListener("fullscreenchange", () => {
+      updateFullscreenButton();
+      revealHud();
+    });
+    document.addEventListener("webkitfullscreenchange", () => {
       updateFullscreenButton();
       revealHud();
     });
