@@ -139,6 +139,7 @@
       <input id="launchCode" type="text" inputmode="latin" autocapitalize="characters" placeholder="例 K7P2X" style="width:150px;text-transform:uppercase;letter-spacing:3px;font:700 18px ui-monospace,monospace;text-align:center;padding:8px;border-radius:8px;border:1px solid #444;background:#11131a;color:#f4f1ea" />
       <button class="hud-button" id="launchCloud" type="button" style="min-height:44px">📲 接続</button>
     </div>
+    <a id="openInSafari" href="#" style="display:none;margin-top:24px;color:#8fdcff;font-size:13px;text-decoration:underline">アプリ内ブラウザの方は → Safari で開く（全画面にできます）</a>
   </div>
 
   <script>
@@ -453,6 +454,16 @@
     }
     function showLauncher() {
       document.getElementById("launchPanel").style.display = "block";
+      // Offer a Safari escape hatch only where element-fullscreen is missing —
+      // i.e. an in-app browser (or iPhone Safari). x-safari-https:// breaks most
+      // in-app WebViews out into real Safari, where fullscreen works.
+      const root = document.documentElement;
+      const noFs = !root.requestFullscreen && !root.webkitRequestFullscreen;
+      const a = document.getElementById("openInSafari");
+      if (a && noFs && /^https?:/.test(location.href)) {
+        a.href = "x-safari-" + location.href;
+        a.style.display = "inline-block";
+      }
     }
     document.getElementById("launchOffline").addEventListener("click", () => {
       document.getElementById("launchPanel").style.display = "none";
