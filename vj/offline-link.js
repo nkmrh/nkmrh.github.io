@@ -6,25 +6,31 @@
 // vj-state / vj-audio messages the normal Display Link uses. On the same Wi-Fi
 // the host ICE candidates connect peer-to-peer with zero external dependency.
 window.OfflineLink = (function () {
-  // Host candidates connect on a pure LAN; STUN adds reflexive (srflx)
-  // candidates so it still connects when local-IP mDNS candidates are blocked
-  // (AP isolation / multicast filtering) as long as the network has internet.
-  // If fully offline, STUN just times out and we fall back to host candidates.
+  // Connectivity, best-to-worst: host candidates (pure LAN) → srflx via STUN
+  // (when mDNS host candidates are blocked but the net has internet) → relay
+  // via TURN (when direct P2P is impossible: AP/client isolation, symmetric
+  // NAT, or the two devices are on different networks). ICE only relays as a
+  // last resort, so a good LAN still connects directly. TURN needs internet;
+  // a fully-offline LAN relies on host candidates.
   const RTC_CONFIG = {
     iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+      { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+      { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
     ],
   };
 
-  // Shrink the SDP so it fits a comfortably-scannable QR: keep only UDP host /
-  // srflx candidates (drop TCP and relay), which is all a same-Wi-Fi link uses.
+  // Shrink the SDP so it fits a scannable QR: keep UDP host / srflx / relay
+  // candidates (drop the TCP host duplicates). Relay candidates are needed so
+  // the TURN fallback can establish when direct P2P is impossible.
   function filterSdp(sdp) {
     return sdp
       .split(/\r?\n/)
       .filter((line) => {
         if (line.indexOf("a=candidate:") === 0) {
-          return /typ (host|srflx)/.test(line) && / udp /i.test(line);
+          return /typ (host|srflx|relay)/.test(line) && / udp /i.test(line);
         }
         return true;
       })
@@ -48,7 +54,7 @@ window.OfflineLink = (function () {
       if (pc.iceGatheringState === "complete") return resolve();
       let done = false;
       const finish = () => { if (!done) { done = true; resolve(); } };
-      const to = setTimeout(finish, timeoutMs || 3000);
+      const to = setTimeout(finish, timeoutMs || 4500);
       pc.addEventListener("icegatheringstatechange", () => {
         if (pc.iceGatheringState === "complete") { clearTimeout(to); finish(); }
       });
