@@ -457,11 +457,18 @@
     } else if (OFFLINE) {
       startOfflineMode();
     } else {
-      let hasStored = false;
-      try { hasStored = !!JSON.parse(localStorage.getItem("vj-state") || "null"); } catch (e) {}
-      const isStandalone = window.parent === window && !window.opener;
-      if (isStandalone && !readStateFromHostWindow() && !hasStored) {
+      // Standalone top-level tab (a separate display device) with no opener/
+      // parent host: always offer the chooser. The control's popup (has opener)
+      // and the preview iframe (parent !== window) skip it and sync locally.
+      const isStandalone = window.parent === window && !window.opener && !readStateFromHostWindow();
+      if (isStandalone) {
         showLauncher();
+        // If a live control is running on THIS machine/origin, its localStorage
+        // updates will arrive as storage events — auto-dismiss and sync then.
+        window.addEventListener("storage", () => {
+          const lp = document.getElementById("launchPanel");
+          if (lp && lp.style.display !== "none") { lp.style.display = "none"; startLocalSync(); }
+        }, { once: true });
       } else {
         startLocalSync();
       }
