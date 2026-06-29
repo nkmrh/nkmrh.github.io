@@ -251,8 +251,8 @@
       // iOS Safari exposes no element-fullscreen API: explain instead of silently
       // doing nothing (the real fullscreen there is "Add to Home Screen").
       if (!request) {
-        showLinkStatus("iOS は全画面API非対応 — 共有メニュー→『ホーム画面に追加』で起動すると全画面になります");
-        window.setTimeout(() => showLinkStatus(null), 4500);
+        showLinkStatus("この環境は全画面API非対応（アプリ内ブラウザ等）。Safari で開くか、共有→『ホーム画面に追加』から起動すると全画面になります");
+        window.setTimeout(() => showLinkStatus(null), 5500);
         return;
       }
       try {
