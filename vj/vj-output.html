@@ -104,6 +104,26 @@
   </div>
   <div class="blackout" id="blackout"></div>
   <div id="linkStatus" style="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:20;padding:14px 20px;background:rgba(18,20,26,.9);border:1px solid rgba(255,255,255,.18);border-radius:10px;color:#f4f1ea;font:600 15px/1.4 system-ui,-apple-system,BlinkMacSystemFont,sans-serif;backdrop-filter:blur(10px);display:none;text-align:center"></div>
+  <div id="offPanel" style="display:none;position:fixed;inset:0;z-index:30;background:rgba(8,9,12,.96);color:#f4f1ea;font:500 14px/1.6 system-ui,-apple-system,sans-serif;overflow:auto;padding:24px 18px;text-align:center">
+    <h2 style="margin:4px 0 2px">📷 Offline Link</h2>
+    <div style="opacity:.6;font-size:12px;margin-bottom:16px">操作側(iPhone)の QR を読み取り → 返信 QR を見せる</div>
+    <div id="offA">
+      <div style="font-weight:700;margin-bottom:6px">① iPhone の QR を読み取る</div>
+      <video id="offScan" playsinline muted style="width:260px;max-width:80vw;border-radius:10px;background:#000"></video>
+      <details style="max-width:520px;margin:8px auto 0"><summary style="cursor:pointer;opacity:.7;font-size:12px">カメラを使わず貼り付け</summary>
+        <textarea id="offOfferText" placeholder="iPhone のコードを貼り付け" style="width:100%;height:64px;margin-top:6px;font-size:11px;background:#11131a;color:#9fb6c8;border:1px solid #333;border-radius:6px"></textarea>
+        <button class="hud-button" id="offOfferGo" type="button">読み込む</button>
+      </details>
+    </div>
+    <div id="offB" style="display:none">
+      <div style="font-weight:700;margin:6px 0">② この返信 QR を iPhone に読ませる</div>
+      <div id="offAnswerQr" style="display:inline-block;background:#fff;padding:10px;border-radius:10px"></div>
+      <details style="max-width:520px;margin:8px auto 0"><summary style="cursor:pointer;opacity:.7;font-size:12px">コピペで渡す</summary>
+        <textarea id="offAnswerText" readonly style="width:100%;height:64px;margin-top:6px;font-size:11px;background:#11131a;color:#9fb6c8;border:1px solid #333;border-radius:6px"></textarea>
+      </details>
+    </div>
+    <div id="offStatus" style="margin-top:16px;font-weight:700;color:#8fdcff"></div>
+  </div>
 
   <script>
     const stage = document.getElementById("stage");
@@ -341,11 +361,63 @@
       peer.on("disconnected", () => { try { peer.reconnect(); } catch (e) {} });
     }
 
+    // ---- Offline Link receiver: serverless WebRTC, this display is the
+    // answerer. Opened as vj-output.html?offline=1; scans the control's offer
+    // QR (or pasted code) and shows an answer QR back. (see offline-link.js)
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error("load failed: " + src));
+        document.head.appendChild(s);
+      });
+    }
+    async function loadOfflineLibs() {
+      if (!window.QRCode) await loadScript("vendor/qrcode.min.js");
+      if (!window.jsQR) await loadScript("vendor/jsqr.min.js");
+      if (!window.OfflineLink) await loadScript("offline-link.js");
+    }
+    function offStatus(t) { document.getElementById("offStatus").textContent = t; }
+    let offlineScanner = null;
+    function onOfflineOpen() {
+      offStatus("接続済み ✓");
+      setTimeout(() => { document.getElementById("offPanel").style.display = "none"; }, 1000);
+    }
+    async function acceptOffer(text) {
+      if (!text || !text.trim()) return;
+      try {
+        const r = await window.OfflineLink.makeAnswer(text.trim(), onOfflineOpen, handleLinkData);
+        const fit = window.OfflineLink.showQR(document.getElementById("offAnswerQr"), r.blob);
+        document.getElementById("offAnswerText").value = r.blob;
+        document.getElementById("offA").style.display = "none";
+        document.getElementById("offB").style.display = "block";
+        offStatus(fit ? "iPhone でこの返信 QR を読み取って" : "コピペで返信コードを渡して");
+      } catch (e) { offStatus("コードが不正です"); }
+    }
+    async function startOfflineMode() {
+      document.getElementById("offPanel").style.display = "block";
+      offStatus("カメラ起動中…");
+      try { await loadOfflineLibs(); } catch (e) { offStatus("ライブラリの読み込みに失敗"); return; }
+      offlineScanner = window.OfflineLink.startScanner(document.getElementById("offScan"), (text, err) => {
+        if (!text) { offStatus("カメラ不可 — 貼り付けを使って"); return; }
+        if (offlineScanner) offlineScanner.stop();
+        acceptOffer(text);
+      });
+    }
+    document.getElementById("offOfferGo").addEventListener("click", () => {
+      if (offlineScanner) offlineScanner.stop();
+      acceptOffer(document.getElementById("offOfferText").value);
+    });
+
     const LINK_CODE = new URLSearchParams(window.location.search).get("link");
+    const OFFLINE = new URLSearchParams(window.location.search).get("offline");
     updateFullscreenButton();
     revealHud();
     if (LINK_CODE) {
       startLinkedMode(LINK_CODE);
+    } else if (OFFLINE) {
+      startOfflineMode();
     } else {
       syncStateFromHostWindow();
       syncStateFromStorage();

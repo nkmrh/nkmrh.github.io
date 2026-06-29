@@ -616,6 +616,7 @@
       <div class="actions">
         <button class="button primary" id="openOutput" type="button">Open Output</button>
         <button class="button" id="linkBtn" type="button">📲 Link</button>
+        <button class="button" id="offlineBtn" type="button">📷 Offline</button>
         <button class="button" id="audioBtn" type="button">🎤 Audio</button>
         <button class="button" id="mono" type="button">Mono</button>
         <button class="button" id="blackout" type="button">Blackout</button>
@@ -633,6 +634,24 @@
         <button class="button mini" id="linkClose" type="button">閉じる</button>
       </div>
       <div style="opacity:.6;margin-top:8px;font-size:11px">表示する iPad 等でこの URL を開く → 同期されたら AirPlay で投影。同じ Wi-Fi 推奨。</div>
+    </div>
+    <div id="offPanel" style="display:none;position:fixed;inset:0;z-index:60;background:rgba(8,9,12,.96);color:#f4f1ea;font:500 14px/1.6 system-ui,-apple-system,sans-serif;overflow:auto;padding:24px 18px;text-align:center">
+      <button class="button mini" id="offClose" type="button" style="position:absolute;top:16px;right:16px">✕ 閉じる</button>
+      <h2 style="margin:4px 0 2px">📷 Offline Link</h2>
+      <div style="opacity:.6;font-size:12px;margin-bottom:16px">サーバ不要・同じ Wi-Fi 推奨。iPad は <b>vj-output.html?offline=1</b> を開いておく</div>
+      <div style="font-weight:700;margin-bottom:6px">① iPad でこの QR を読み取る</div>
+      <div id="offOfferQr" style="display:inline-block;background:#fff;padding:10px;border-radius:10px;min-width:120px;min-height:120px"></div>
+      <details style="max-width:520px;margin:8px auto 0"><summary style="cursor:pointer;opacity:.7;font-size:12px">QR が読めない時はコピペ</summary>
+        <textarea id="offOfferText" readonly style="width:100%;height:64px;margin-top:6px;font-size:11px;background:#11131a;color:#9fb6c8;border:1px solid #333;border-radius:6px"></textarea>
+        <button class="button mini" id="offOfferCopy" type="button">コピー</button>
+      </details>
+      <div style="font-weight:700;margin:22px 0 6px">② iPad に出た「返信 QR」を読み取る</div>
+      <video id="offScan" playsinline muted style="width:240px;max-width:80vw;border-radius:10px;background:#000"></video>
+      <details style="max-width:520px;margin:8px auto 0"><summary style="cursor:pointer;opacity:.7;font-size:12px">カメラを使わず貼り付け</summary>
+        <textarea id="offAnswerText" placeholder="iPad のコードを貼り付け" style="width:100%;height:64px;margin-top:6px;font-size:11px;background:#11131a;color:#9fb6c8;border:1px solid #333;border-radius:6px"></textarea>
+        <button class="button mini" id="offAnswerGo" type="button">接続</button>
+      </details>
+      <div id="offStatus" style="margin-top:16px;font-weight:700;color:#8fdcff"></div>
     </div>
 
     <main class="grid">
@@ -1480,7 +1499,8 @@
     // The remote opens vj-output.html?link=CODE; we stream the same vj-state /
     // vj-audio messages the local output gets, peer-to-peer (no backend).
     let linkPeer = null;
-    let linkConns = [];
+    let linkConns = [];      // PeerJS DataConnections (cloud link)
+    let rawChannels = [];    // raw RTCDataChannels (offline QR link)
     let linkCode = null;
     function loadPeerJS() {
       return new Promise((resolve, reject) => {
@@ -1503,7 +1523,7 @@
     }
     async function renderLinkQr(url) {
       try {
-        if (!window.QRCode) await loadScript("https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js");
+        if (!window.QRCode) await loadScript("vendor/qrcode.min.js");
         const box = document.getElementById("linkQr");
         box.innerHTML = "";
         new window.QRCode(box, { text: url, width: 180, height: 180, colorDark: "#000000", colorLight: "#ffffff", correctLevel: window.QRCode.CorrectLevel.M });
@@ -1514,6 +1534,17 @@
       for (const c of linkConns) {
         if (c && c.open) { try { c.send(msg); } catch (e) {} }
       }
+      if (rawChannels.length) {
+        const json = JSON.stringify(msg);
+        for (const ch of rawChannels) {
+          if (ch && ch.readyState === "open") { try { ch.send(json); } catch (e) {} }
+        }
+      }
+    }
+    async function loadOfflineLibs() {
+      if (!window.QRCode) await loadScript("vendor/qrcode.min.js");
+      if (!window.jsQR) await loadScript("vendor/jsqr.min.js");
+      if (!window.OfflineLink) await loadScript("offline-link.js");
     }
     function setLinkStatus(t) {
       const el = document.getElementById("linkStatus");
@@ -1565,6 +1596,49 @@
     document.getElementById("linkCopy").addEventListener("click", () => {
       const u = document.getElementById("linkUrl").textContent;
       if (navigator.clipboard) navigator.clipboard.writeText(u).then(() => setLinkStatus("URL をコピーしました"));
+    });
+
+    // ---- Offline Link: serverless WebRTC, offer/answer exchanged by QR or
+    // copy-paste (see offline-link.js). The control is the offerer.
+    let offlinePc = null;
+    let offlineScanner = null;
+    function offStatus(t) { document.getElementById("offStatus").textContent = t; }
+    function onOfflineOpen(dc) {
+      rawChannels.push(dc);
+      offStatus("接続済み ✓");
+      if (state) { try { dc.send(JSON.stringify({ type: "vj-state", state })); } catch (e) {} }
+      if (offlineScanner) offlineScanner.stop();
+      setTimeout(() => { document.getElementById("offPanel").style.display = "none"; }, 1200);
+    }
+    async function applyOfflineAnswer(text) {
+      if (!offlinePc || !text.trim()) return;
+      try { await window.OfflineLink.acceptAnswer(offlinePc, text.trim()); offStatus("接続中…"); }
+      catch (e) { offStatus("返信コードが不正です"); }
+    }
+    async function startOffline() {
+      document.getElementById("offPanel").style.display = "block";
+      offStatus("生成中…");
+      try { await loadOfflineLibs(); } catch (e) { offStatus("ライブラリの読み込みに失敗"); return; }
+      const r = await window.OfflineLink.makeOffer(onOfflineOpen, () => {});
+      offlinePc = r.pc;
+      const fit = window.OfflineLink.showQR(document.getElementById("offOfferQr"), r.blob);
+      document.getElementById("offOfferText").value = r.blob;
+      if (!fit) document.getElementById("offOfferQr").textContent = "（QR化できず — コピペで）";
+      offStatus("iPad で読み取り → 返信 QR をこちらで読む");
+      offlineScanner = window.OfflineLink.startScanner(document.getElementById("offScan"), (text, err) => {
+        if (!text) { offStatus("カメラ不可 — 貼り付けを使って"); return; }
+        applyOfflineAnswer(text);
+      });
+    }
+    document.getElementById("offlineBtn").addEventListener("click", startOffline);
+    document.getElementById("offClose").addEventListener("click", () => {
+      if (offlineScanner) offlineScanner.stop();
+      document.getElementById("offPanel").style.display = "none";
+    });
+    document.getElementById("offAnswerGo").addEventListener("click", () => applyOfflineAnswer(document.getElementById("offAnswerText").value));
+    document.getElementById("offOfferCopy").addEventListener("click", () => {
+      const u = document.getElementById("offOfferText").value;
+      if (navigator.clipboard) navigator.clipboard.writeText(u).then(() => offStatus("コピーしました"));
     });
 
     // Control keys are arbitrary per work. Only a control keyed "bpm" opts a layer
