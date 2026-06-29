@@ -103,6 +103,7 @@
     <button class="hud-button" id="fullscreenButton" type="button">Fullscreen</button>
   </div>
   <div class="blackout" id="blackout"></div>
+  <div id="linkStatus" style="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:20;padding:14px 20px;background:rgba(18,20,26,.9);border:1px solid rgba(255,255,255,.18);border-radius:10px;color:#f4f1ea;font:600 15px/1.4 system-ui,-apple-system,BlinkMacSystemFont,sans-serif;backdrop-filter:blur(10px);display:none;text-align:center"></div>
 
   <script>
     const stage = document.getElementById("stage");
@@ -285,13 +286,73 @@
       if (hostState) applyState(hostState);
     }
 
+    // ---- Display Link receiver: when opened as vj-output.html?link=CODE on a
+    // separate device (iPad etc.), pull state/audio over WebRTC (PeerJS) instead
+    // of the same-device host window / localStorage path.
+    function showLinkStatus(t) {
+      const el = document.getElementById("linkStatus");
+      if (!el) return;
+      if (t == null) { el.style.display = "none"; }
+      else { el.style.display = "block"; el.textContent = t; }
+    }
+    function loadPeerJS() {
+      return new Promise((resolve, reject) => {
+        if (window.Peer) return resolve();
+        const s = document.createElement("script");
+        s.src = "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js";
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error("peerjs load failed"));
+        document.head.appendChild(s);
+      });
+    }
+    function handleLinkData(msg) {
+      if (!msg) return;
+      if (msg.type === "vj-state" && msg.state) applyState(msg.state);
+      if (msg.type === "vj-audio" && msg.a) {
+        if (!window.__vjState) window.__vjState = {};
+        window.__vjState.audio = msg.a;
+        try { if (layerA.contentWindow) layerA.contentWindow.postMessage(msg, "*"); } catch (e) {}
+        try { if (layerB.contentWindow) layerB.contentWindow.postMessage(msg, "*"); } catch (e) {}
+      }
+    }
+    async function startLinkedMode(code) {
+      showLinkStatus("接続中…（コード " + String(code).toUpperCase() + "）");
+      try { await loadPeerJS(); } catch (e) { showLinkStatus("PeerJS の読み込みに失敗"); return; }
+      const target = "diptych-" + String(code).toLowerCase();
+      const peer = new Peer();
+      let conn = null, retry = null;
+      function connect() {
+        clearTimeout(retry);
+        conn = peer.connect(target, { reliable: true });
+        conn.on("open", () => showLinkStatus(null));
+        conn.on("data", handleLinkData);
+        conn.on("close", () => { showLinkStatus("再接続中…"); retry = setTimeout(connect, 2000); });
+        conn.on("error", () => {});
+      }
+      peer.on("open", connect);
+      peer.on("error", (e) => {
+        if (e.type === "peer-unavailable") {
+          showLinkStatus("操作側を待機中…（コード " + String(code).toUpperCase() + "）");
+          retry = setTimeout(connect, 2500);
+        } else {
+          showLinkStatus("Link error: " + e.type);
+        }
+      });
+      peer.on("disconnected", () => { try { peer.reconnect(); } catch (e) {} });
+    }
+
+    const LINK_CODE = new URLSearchParams(window.location.search).get("link");
     updateFullscreenButton();
     revealHud();
-    syncStateFromHostWindow();
-    syncStateFromStorage();
-    requestStateFromHost();
-    window.setInterval(syncStateFromHostWindow, 120);
-    window.setInterval(syncStateFromStorage, 120);
+    if (LINK_CODE) {
+      startLinkedMode(LINK_CODE);
+    } else {
+      syncStateFromHostWindow();
+      syncStateFromStorage();
+      requestStateFromHost();
+      window.setInterval(syncStateFromHostWindow, 120);
+      window.setInterval(syncStateFromStorage, 120);
+    }
   </script>
 </body>
 </html>
