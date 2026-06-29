@@ -124,6 +124,16 @@
     </div>
     <div id="offStatus" style="margin-top:16px;font-weight:700;color:#8fdcff"></div>
   </div>
+  <div id="launchPanel" style="display:none;position:fixed;inset:0;z-index:25;background:rgba(8,9,12,.97);color:#f4f1ea;font:500 15px/1.7 system-ui,-apple-system,sans-serif;overflow:auto;padding:32px 20px;text-align:center">
+    <h2 style="margin:8px 0 2px;font-size:24px">📺 表示デバイス</h2>
+    <div style="opacity:.6;font-size:13px;margin-bottom:28px">この画面を Diptych の出力にして AirPlay で投影します</div>
+    <button class="hud-button" id="launchOffline" type="button" style="display:block;width:100%;max-width:360px;margin:0 auto 18px;min-height:54px;font-size:16px">📷 オフラインで接続（QR・サーバ不要）</button>
+    <div style="max-width:360px;margin:0 auto;padding-top:18px;border-top:1px solid rgba(255,255,255,.12)">
+      <div style="opacity:.7;font-size:13px;margin-bottom:8px">またはクラウドリンクのコードを入力</div>
+      <input id="launchCode" type="text" inputmode="latin" autocapitalize="characters" placeholder="例 K7P2X" style="width:150px;text-transform:uppercase;letter-spacing:3px;font:700 18px ui-monospace,monospace;text-align:center;padding:8px;border-radius:8px;border:1px solid #444;background:#11131a;color:#f4f1ea" />
+      <button class="hud-button" id="launchCloud" type="button" style="min-height:44px">📲 接続</button>
+    </div>
+  </div>
 
   <script>
     const stage = document.getElementById("stage");
@@ -410,6 +420,34 @@
       acceptOffer(document.getElementById("offOfferText").value);
     });
 
+    // Standalone launcher: when this page is opened on its own (a top-level tab
+    // on a separate device, not the control's popup or preview iframe) with no
+    // ?link / ?offline and no stored state, offer a mode chooser so the device
+    // only needs to bookmark the bare vj-output.html — no query string to type.
+    function startLocalSync() {
+      syncStateFromHostWindow();
+      syncStateFromStorage();
+      requestStateFromHost();
+      window.setInterval(syncStateFromHostWindow, 120);
+      window.setInterval(syncStateFromStorage, 120);
+    }
+    function showLauncher() {
+      document.getElementById("launchPanel").style.display = "block";
+    }
+    document.getElementById("launchOffline").addEventListener("click", () => {
+      document.getElementById("launchPanel").style.display = "none";
+      startOfflineMode();
+    });
+    document.getElementById("launchCloud").addEventListener("click", () => {
+      const code = document.getElementById("launchCode").value.trim().toUpperCase();
+      if (!code) return;
+      document.getElementById("launchPanel").style.display = "none";
+      startLinkedMode(code);
+    });
+    document.getElementById("launchCode").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("launchCloud").click();
+    });
+
     const LINK_CODE = new URLSearchParams(window.location.search).get("link");
     const OFFLINE = new URLSearchParams(window.location.search).get("offline");
     updateFullscreenButton();
@@ -419,11 +457,14 @@
     } else if (OFFLINE) {
       startOfflineMode();
     } else {
-      syncStateFromHostWindow();
-      syncStateFromStorage();
-      requestStateFromHost();
-      window.setInterval(syncStateFromHostWindow, 120);
-      window.setInterval(syncStateFromStorage, 120);
+      let hasStored = false;
+      try { hasStored = !!JSON.parse(localStorage.getItem("vj-state") || "null"); } catch (e) {}
+      const isStandalone = window.parent === window && !window.opener;
+      if (isStandalone && !readStateFromHostWindow() && !hasStored) {
+        showLauncher();
+      } else {
+        startLocalSync();
+      }
     }
   </script>
 </body>
