@@ -38,11 +38,30 @@ window.OfflineLink = (function () {
       .join("\r\n");
   }
 
+  // URL-safe base64 of raw bytes (and back), so a deflated blob survives in a
+  // QR / text field.
+  function b64u(bytes) {
+    let s = "";
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function ub64u(str) {
+    str = str.replace(/-/g, "+").replace(/_/g, "/");
+    while (str.length % 4) str += "=";
+    const bin = atob(str);
+    const a = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+    return a;
+  }
+  // Deflate-compress the description so the (now STUN/TURN-laden) SDP still fits
+  // a low-density, easy-to-scan QR. SDP is very repetitive → compresses hard.
   function pack(desc) {
-    return JSON.stringify({ t: desc.type, s: filterSdp(desc.sdp) });
+    const json = JSON.stringify({ t: desc.type, s: filterSdp(desc.sdp) });
+    return b64u(window.pako.deflate(json));
   }
   function unpack(blob) {
-    const o = JSON.parse(blob);
+    const json = window.pako.inflate(ub64u(String(blob).trim()), { to: "string" });
+    const o = JSON.parse(json);
     return { type: o.t, sdp: o.s.endsWith("\r\n") ? o.s : o.s + "\r\n" };
   }
 
@@ -104,7 +123,7 @@ window.OfflineLink = (function () {
     boxEl.innerHTML = "";
     try {
       new window.QRCode(boxEl, {
-        text, width: 240, height: 240,
+        text, width: 280, height: 280,
         colorDark: "#000000", colorLight: "#ffffff",
         correctLevel: window.QRCode.CorrectLevel.L,
       });

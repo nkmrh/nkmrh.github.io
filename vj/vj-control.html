@@ -1504,6 +1504,7 @@
     async function loadOfflineLibs() {
       if (!window.QRCode) await loadScript("vendor/qrcode.min.js");
       if (!window.jsQR) await loadScript("vendor/jsqr.min.js");
+      if (!window.pako) await loadScript("vendor/pako.min.js");
       if (!window.OfflineLink) await loadScript("offline-link.js");
     }
 
