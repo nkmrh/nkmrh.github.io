@@ -6,9 +6,16 @@
 // vj-state / vj-audio messages the normal Display Link uses. On the same Wi-Fi
 // the host ICE candidates connect peer-to-peer with zero external dependency.
 window.OfflineLink = (function () {
-  // No iceServers: on a LAN, host candidates are enough. (Cross-subnet would
-  // need a STUN server; offline mode targets same-Wi-Fi by design.)
-  const RTC_CONFIG = { iceServers: [] };
+  // Host candidates connect on a pure LAN; STUN adds reflexive (srflx)
+  // candidates so it still connects when local-IP mDNS candidates are blocked
+  // (AP isolation / multicast filtering) as long as the network has internet.
+  // If fully offline, STUN just times out and we fall back to host candidates.
+  const RTC_CONFIG = {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+    ],
+  };
 
   // Shrink the SDP so it fits a comfortably-scannable QR: keep only UDP host /
   // srflx candidates (drop TCP and relay), which is all a same-Wi-Fi link uses.
@@ -55,9 +62,15 @@ window.OfflineLink = (function () {
     };
   }
 
+  function watchState(pc, onState) {
+    if (!onState) return;
+    pc.addEventListener("iceconnectionstatechange", () => onState(pc.iceConnectionState));
+  }
+
   // Offerer (the control side).
-  async function makeOffer(onOpen, onData) {
+  async function makeOffer(onOpen, onData, onState) {
     const pc = new RTCPeerConnection(RTC_CONFIG);
+    watchState(pc, onState);
     const dc = pc.createDataChannel("vj", { ordered: true });
     wireChannel(dc, onOpen, onData);
     await pc.setLocalDescription(await pc.createOffer());
@@ -69,8 +82,9 @@ window.OfflineLink = (function () {
   }
 
   // Answerer (the display side).
-  async function makeAnswer(offerBlob, onOpen, onData) {
+  async function makeAnswer(offerBlob, onOpen, onData, onState) {
     const pc = new RTCPeerConnection(RTC_CONFIG);
+    watchState(pc, onState);
     pc.ondatachannel = (ev) => wireChannel(ev.channel, onOpen, onData);
     await pc.setRemoteDescription(unpack(offerBlob));
     await pc.setLocalDescription(await pc.createAnswer());

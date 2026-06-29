@@ -370,6 +370,11 @@
       if (!window.OfflineLink) await loadScript("offline-link.js");
     }
     function offStatus(t) { document.getElementById("offStatus").textContent = t; }
+    function onOfflineState(s) {
+      if (s === "checking") offStatus("接続を確認中…（QRが両方読めていればまもなく）");
+      else if (s === "failed") offStatus("接続失敗 — 2台が同じ Wi-Fi か確認（ゲストWi-Fi/AP分離だと不可）");
+      else if (s === "disconnected") offStatus("一時切断 — 再接続を試行中");
+    }
     let offlineScanner = null;
     function onOfflineOpen() {
       offStatus("接続済み ✓");
@@ -378,7 +383,7 @@
     async function acceptOffer(text) {
       if (!text || !text.trim()) return;
       try {
-        const r = await window.OfflineLink.makeAnswer(text.trim(), onOfflineOpen, handleLinkData);
+        const r = await window.OfflineLink.makeAnswer(text.trim(), onOfflineOpen, handleLinkData, onOfflineState);
         const fit = window.OfflineLink.showQR(document.getElementById("offAnswerQr"), r.blob);
         document.getElementById("offAnswerText").value = r.blob;
         document.getElementById("offA").style.display = "none";

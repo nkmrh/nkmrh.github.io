@@ -1512,6 +1512,11 @@
     let offlinePc = null;
     let offlineScanner = null;
     function offStatus(t) { document.getElementById("offStatus").textContent = t; }
+    function onOfflineState(s) {
+      if (s === "checking") offStatus("接続を確認中…（QRが両方読めていればまもなく）");
+      else if (s === "failed") offStatus("接続失敗 — 2台が同じ Wi-Fi か確認（ゲストWi-Fi/AP分離だと不可）");
+      else if (s === "disconnected") offStatus("一時切断 — 再接続を試行中");
+    }
     function onOfflineOpen(dc) {
       rawChannels.push(dc);
       offStatus("接続済み ✓");
@@ -1528,7 +1533,7 @@
       document.getElementById("offPanel").style.display = "block";
       offStatus("生成中…");
       try { await loadOfflineLibs(); } catch (e) { offStatus("ライブラリの読み込みに失敗"); return; }
-      const r = await window.OfflineLink.makeOffer(onOfflineOpen, () => {});
+      const r = await window.OfflineLink.makeOffer(onOfflineOpen, () => {}, onOfflineState);
       offlinePc = r.pc;
       const fit = window.OfflineLink.showQR(document.getElementById("offOfferQr"), r.blob);
       document.getElementById("offOfferText").value = r.blob;
