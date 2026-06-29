@@ -626,6 +626,7 @@
       <div style="font-weight:700;margin-bottom:6px">📲 Display Link</div>
       <div id="linkStatus" style="opacity:.8;margin-bottom:8px">準備中…</div>
       <div>コード: <span id="linkCode" style="font:700 22px/1 ui-monospace,monospace;letter-spacing:3px">—</span></div>
+      <div id="linkQrWrap" style="display:none;margin-top:10px;text-align:center"><div id="linkQr" style="display:inline-block;background:#fff;border-radius:8px;padding:8px;line-height:0"></div><div style="opacity:.6;font-size:11px;margin-top:4px">iPad のカメラで読み取り</div></div>
       <div style="margin-top:8px;word-break:break-all"><a id="linkUrl" href="#" target="_blank" rel="noopener" style="color:#8fdcff">URL</a></div>
       <div style="margin-top:10px;display:flex;gap:8px">
         <button class="button mini" id="linkCopy" type="button">URLコピー</button>
@@ -1491,6 +1492,24 @@
         document.head.appendChild(s);
       });
     }
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error("load failed: " + src));
+        document.head.appendChild(s);
+      });
+    }
+    async function renderLinkQr(url) {
+      try {
+        if (!window.QRCode) await loadScript("https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js");
+        const box = document.getElementById("linkQr");
+        box.innerHTML = "";
+        new window.QRCode(box, { text: url, width: 180, height: 180, colorDark: "#000000", colorLight: "#ffffff", correctLevel: window.QRCode.CorrectLevel.M });
+        document.getElementById("linkQrWrap").style.display = "block";
+      } catch (e) { /* QR is optional; URL/code still work */ }
+    }
     function linkSend(msg) {
       for (const c of linkConns) {
         if (c && c.open) { try { c.send(msg); } catch (e) {} }
@@ -1510,6 +1529,7 @@
       const url = location.href.replace(/vj-control\.html.*$/, "") + "vj-output.html?link=" + linkCode;
       const a = document.getElementById("linkUrl");
       a.href = url; a.textContent = url;
+      renderLinkQr(url);
       linkPeer = new Peer("diptych-" + linkCode.toLowerCase());
       linkPeer.on("open", () => setLinkStatus("待機中 — 表示側でこの URL / コードを開いて"));
       linkPeer.on("connection", (conn) => {
