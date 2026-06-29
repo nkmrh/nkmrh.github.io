@@ -133,12 +133,7 @@
   <div id="launchPanel" style="display:none;position:fixed;inset:0;z-index:25;background:rgba(8,9,12,.97);color:#f4f1ea;font:500 15px/1.7 system-ui,-apple-system,sans-serif;overflow:auto;padding:32px 20px;text-align:center">
     <h2 style="margin:8px 0 2px;font-size:24px">📺 表示デバイス</h2>
     <div style="opacity:.6;font-size:13px;margin-bottom:28px">この画面を Diptych の出力にして AirPlay で投影します</div>
-    <button class="hud-button" id="launchOffline" type="button" style="display:block;width:100%;max-width:360px;margin:0 auto 18px;min-height:54px;font-size:16px">📷 オフラインで接続（QR・サーバ不要）</button>
-    <div style="max-width:360px;margin:0 auto;padding-top:18px;border-top:1px solid rgba(255,255,255,.12)">
-      <div style="opacity:.7;font-size:13px;margin-bottom:8px">またはクラウドリンクのコードを入力</div>
-      <input id="launchCode" type="text" inputmode="latin" autocapitalize="characters" placeholder="例 K7P2X" style="width:150px;text-transform:uppercase;letter-spacing:3px;font:700 18px ui-monospace,monospace;text-align:center;padding:8px;border-radius:8px;border:1px solid #444;background:#11131a;color:#f4f1ea" />
-      <button class="hud-button" id="launchCloud" type="button" style="min-height:44px">📲 接続</button>
-    </div>
+    <button class="hud-button" id="launchOffline" type="button" style="display:block;width:100%;max-width:360px;margin:0 auto;min-height:54px;font-size:16px">📷 オフラインで接続（QR・サーバ不要）</button>
     <a id="openInSafari" href="#" style="display:none;margin-top:24px;color:#8fdcff;font-size:13px;text-decoration:underline">アプリ内ブラウザの方は → Safari で開く（全画面にできます）</a>
   </div>
 
@@ -337,24 +332,14 @@
       if (hostState) applyState(hostState);
     }
 
-    // ---- Display Link receiver: when opened as vj-output.html?link=CODE on a
-    // separate device (iPad etc.), pull state/audio over WebRTC (PeerJS) instead
-    // of the same-device host window / localStorage path.
+    // showLinkStatus drives the centered #linkStatus box (also reused by the
+    // fullscreen hint). handleLinkData applies the vj-state / vj-audio messages
+    // delivered over the Offline Link's data channel.
     function showLinkStatus(t) {
       const el = document.getElementById("linkStatus");
       if (!el) return;
       if (t == null) { el.style.display = "none"; }
       else { el.style.display = "block"; el.textContent = t; }
-    }
-    function loadPeerJS() {
-      return new Promise((resolve, reject) => {
-        if (window.Peer) return resolve();
-        const s = document.createElement("script");
-        s.src = "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js";
-        s.onload = () => resolve();
-        s.onerror = () => reject(new Error("peerjs load failed"));
-        document.head.appendChild(s);
-      });
     }
     function handleLinkData(msg) {
       if (!msg) return;
@@ -365,31 +350,6 @@
         try { if (layerA.contentWindow) layerA.contentWindow.postMessage(msg, "*"); } catch (e) {}
         try { if (layerB.contentWindow) layerB.contentWindow.postMessage(msg, "*"); } catch (e) {}
       }
-    }
-    async function startLinkedMode(code) {
-      showLinkStatus("接続中…（コード " + String(code).toUpperCase() + "）");
-      try { await loadPeerJS(); } catch (e) { showLinkStatus("PeerJS の読み込みに失敗"); return; }
-      const target = "diptych-" + String(code).toLowerCase();
-      const peer = new Peer();
-      let conn = null, retry = null;
-      function connect() {
-        clearTimeout(retry);
-        conn = peer.connect(target, { reliable: true });
-        conn.on("open", () => showLinkStatus(null));
-        conn.on("data", handleLinkData);
-        conn.on("close", () => { showLinkStatus("再接続中…"); retry = setTimeout(connect, 2000); });
-        conn.on("error", () => {});
-      }
-      peer.on("open", connect);
-      peer.on("error", (e) => {
-        if (e.type === "peer-unavailable") {
-          showLinkStatus("操作側を待機中…（コード " + String(code).toUpperCase() + "）");
-          retry = setTimeout(connect, 2500);
-        } else {
-          showLinkStatus("Link error: " + e.type);
-        }
-      });
-      peer.on("disconnected", () => { try { peer.reconnect(); } catch (e) {} });
     }
 
     // ---- Offline Link receiver: serverless WebRTC, this display is the
@@ -469,23 +429,11 @@
       document.getElementById("launchPanel").style.display = "none";
       startOfflineMode();
     });
-    document.getElementById("launchCloud").addEventListener("click", () => {
-      const code = document.getElementById("launchCode").value.trim().toUpperCase();
-      if (!code) return;
-      document.getElementById("launchPanel").style.display = "none";
-      startLinkedMode(code);
-    });
-    document.getElementById("launchCode").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") document.getElementById("launchCloud").click();
-    });
 
-    const LINK_CODE = new URLSearchParams(window.location.search).get("link");
     const OFFLINE = new URLSearchParams(window.location.search).get("offline");
     updateFullscreenButton();
     revealHud();
-    if (LINK_CODE) {
-      startLinkedMode(LINK_CODE);
-    } else if (OFFLINE) {
+    if (OFFLINE) {
       startOfflineMode();
     } else {
       // Standalone top-level tab (a separate display device) with no opener/

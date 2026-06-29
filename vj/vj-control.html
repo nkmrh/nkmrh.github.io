@@ -615,7 +615,6 @@
       </div>
       <div class="actions">
         <button class="button primary" id="openOutput" type="button">Open Output</button>
-        <button class="button" id="linkBtn" type="button">📲 Link</button>
         <button class="button" id="offlineBtn" type="button">📷 Offline</button>
         <button class="button" id="audioBtn" type="button">🎤 Audio</button>
         <button class="button" id="mono" type="button">Mono</button>
@@ -623,18 +622,6 @@
         <button class="button" id="reset" type="button">Reset</button>
       </div>
     </header>
-    <div id="linkPanel" style="display:none;position:fixed;right:16px;bottom:16px;z-index:50;max-width:340px;background:rgba(18,20,26,.96);border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:14px 16px;color:#f4f1ea;font:500 13px/1.5 system-ui,-apple-system,sans-serif;backdrop-filter:blur(12px)">
-      <div style="font-weight:700;margin-bottom:6px">📲 Display Link</div>
-      <div id="linkStatus" style="opacity:.8;margin-bottom:8px">準備中…</div>
-      <div>コード: <span id="linkCode" style="font:700 22px/1 ui-monospace,monospace;letter-spacing:3px">—</span></div>
-      <div id="linkQrWrap" style="display:none;margin-top:10px;text-align:center"><div id="linkQr" style="display:inline-block;background:#fff;border-radius:8px;padding:8px;line-height:0"></div><div style="opacity:.6;font-size:11px;margin-top:4px">iPad のカメラで読み取り</div></div>
-      <div style="margin-top:8px;word-break:break-all"><a id="linkUrl" href="#" target="_blank" rel="noopener" style="color:#8fdcff">URL</a></div>
-      <div style="margin-top:10px;display:flex;gap:8px">
-        <button class="button mini" id="linkCopy" type="button">URLコピー</button>
-        <button class="button mini" id="linkClose" type="button">閉じる</button>
-      </div>
-      <div style="opacity:.6;margin-top:8px;font-size:11px">表示する iPad 等でこの URL を開く → 同期されたら AirPlay で投影。同じ Wi-Fi 推奨。</div>
-    </div>
     <div id="offPanel" style="display:none;position:fixed;inset:0;z-index:60;background:rgba(8,9,12,.96);color:#f4f1ea;font:500 14px/1.6 system-ui,-apple-system,sans-serif;overflow:auto;padding:24px 18px;text-align:center">
       <button class="button mini" id="offClose" type="button" style="position:absolute;top:16px;right:16px">✕ 閉じる</button>
       <h2 style="margin:4px 0 2px">📷 Offline Link</h2>
@@ -1495,23 +1482,9 @@
       linkSend({ type: "vj-state", state });
     }
 
-    // ---- Display Link: drive a remote output (iPad etc.) over WebRTC (PeerJS).
-    // The remote opens vj-output.html?link=CODE; we stream the same vj-state /
-    // vj-audio messages the local output gets, peer-to-peer (no backend).
-    let linkPeer = null;
-    let linkConns = [];      // PeerJS DataConnections (cloud link)
-    let rawChannels = [];    // raw RTCDataChannels (offline QR link)
-    let linkCode = null;
-    function loadPeerJS() {
-      return new Promise((resolve, reject) => {
-        if (window.Peer) return resolve();
-        const s = document.createElement("script");
-        s.src = "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js";
-        s.onload = () => resolve();
-        s.onerror = () => reject(new Error("peerjs load failed"));
-        document.head.appendChild(s);
-      });
-    }
+    // ---- Remote output transport: raw RTCDataChannels opened by the Offline
+    // Link. linkSend fans the same vj-state / vj-audio messages out to them.
+    let rawChannels = [];
     function loadScript(src) {
       return new Promise((resolve, reject) => {
         const s = document.createElement("script");
@@ -1521,24 +1494,11 @@
         document.head.appendChild(s);
       });
     }
-    async function renderLinkQr(url) {
-      try {
-        if (!window.QRCode) await loadScript("vendor/qrcode.min.js");
-        const box = document.getElementById("linkQr");
-        box.innerHTML = "";
-        new window.QRCode(box, { text: url, width: 180, height: 180, colorDark: "#000000", colorLight: "#ffffff", correctLevel: window.QRCode.CorrectLevel.M });
-        document.getElementById("linkQrWrap").style.display = "block";
-      } catch (e) { /* QR is optional; URL/code still work */ }
-    }
     function linkSend(msg) {
-      for (const c of linkConns) {
-        if (c && c.open) { try { c.send(msg); } catch (e) {} }
-      }
-      if (rawChannels.length) {
-        const json = JSON.stringify(msg);
-        for (const ch of rawChannels) {
-          if (ch && ch.readyState === "open") { try { ch.send(json); } catch (e) {} }
-        }
+      if (!rawChannels.length) return;
+      const json = JSON.stringify(msg);
+      for (const ch of rawChannels) {
+        if (ch && ch.readyState === "open") { try { ch.send(json); } catch (e) {} }
       }
     }
     async function loadOfflineLibs() {
@@ -1546,57 +1506,6 @@
       if (!window.jsQR) await loadScript("vendor/jsqr.min.js");
       if (!window.OfflineLink) await loadScript("offline-link.js");
     }
-    function setLinkStatus(t) {
-      const el = document.getElementById("linkStatus");
-      if (el) el.textContent = t;
-    }
-    async function startLink() {
-      document.getElementById("linkPanel").style.display = "block";
-      if (linkPeer) return; // already linking
-      setLinkStatus("PeerJS を読み込み中…");
-      try { await loadPeerJS(); } catch (e) { setLinkStatus("PeerJS の読み込みに失敗"); return; }
-      linkCode = Math.random().toString(36).slice(2, 7).toUpperCase().replace(/[^A-Z0-9]/g, "X");
-      document.getElementById("linkCode").textContent = linkCode;
-      const url = location.href.replace(/vj-control\.html.*$/, "") + "vj-output.html?link=" + linkCode;
-      const a = document.getElementById("linkUrl");
-      a.href = url; a.textContent = url;
-      renderLinkQr(url);
-      linkPeer = new Peer("diptych-" + linkCode.toLowerCase());
-      linkPeer.on("open", () => setLinkStatus("待機中 — 表示側でこの URL / コードを開いて"));
-      linkPeer.on("connection", (conn) => {
-        conn.on("open", () => {
-          linkConns.push(conn);
-          setLinkStatus("接続済み ✓ (" + linkConns.length + ")");
-          if (state) conn.send({ type: "vj-state", state });
-        });
-        conn.on("close", () => {
-          linkConns = linkConns.filter((c) => c !== conn);
-          setLinkStatus(linkConns.length ? "接続済み ✓ (" + linkConns.length + ")" : "待機中 — 表示側でこの URL / コードを開いて");
-        });
-        conn.on("error", () => {});
-      });
-      linkPeer.on("error", (e) => {
-        if (e.type === "unavailable-id") {
-          // code collided on the broker; regenerate
-          try { linkPeer.destroy(); } catch (err) {}
-          linkPeer = null;
-          startLink();
-        } else if (e.type === "network" || e.type === "server-error" || e.type === "socket-error") {
-          setLinkStatus("シグナリング接続エラー — 再試行中…");
-        } else {
-          setLinkStatus("Link error: " + e.type);
-        }
-      });
-      linkPeer.on("disconnected", () => { try { linkPeer.reconnect(); } catch (e) {} });
-    }
-    document.getElementById("linkBtn").addEventListener("click", startLink);
-    document.getElementById("linkClose").addEventListener("click", () => {
-      document.getElementById("linkPanel").style.display = "none";
-    });
-    document.getElementById("linkCopy").addEventListener("click", () => {
-      const u = document.getElementById("linkUrl").textContent;
-      if (navigator.clipboard) navigator.clipboard.writeText(u).then(() => setLinkStatus("URL をコピーしました"));
-    });
 
     // ---- Offline Link: serverless WebRTC, offer/answer exchanged by QR or
     // copy-paste (see offline-link.js). The control is the offerer.
